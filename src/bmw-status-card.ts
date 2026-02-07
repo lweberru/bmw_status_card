@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.8';
+const VERSION = '0.1.9';
 
 type HassState = {
   entity_id: string;
@@ -1224,6 +1224,9 @@ class BMWStatusCardEditor extends LitElement {
   private _setEditorError(err: unknown): void {
     const message = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
     this._editorError = message;
+    // Surface in browser console
+    // eslint-disable-next-line no-console
+    console.error('[bmw-status-card] Editor error:', err);
   }
 
   private _emitConfigChanged(): void {
@@ -1355,179 +1358,183 @@ class BMWStatusCardEditor extends LitElement {
 
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
+    try {
+      return html`
+        <div class="form">
+          ${this._editorError ? html`<div class="error">${this._editorError}</div>` : null}
+          <ha-alert alert-type="info">Benötigt bmw_home und bmw-cardata-ha Geräte-IDs.</ha-alert>
 
-    return html`
-      <div class="form">
-        ${this._editorError ? html`<div class="error">${this._editorError}</div>` : null}
-        <ha-alert alert-type="info">Benötigt bmw_home und bmw-cardata-ha Geräte-IDs.</ha-alert>
+          <div class="row">
+            <ha-textfield
+              label="bmw_home Geräte-ID"
+              .value=${this._config.bmw_home_device_id || ''}
+              data-path="bmw_home_device_id"
+              @input=${this._onValueChanged}
+            ></ha-textfield>
+            <ha-textfield
+              label="bmw-cardata-ha Geräte-ID"
+              .value=${this._config.bmw_cardata_device_id || ''}
+              data-path="bmw_cardata_device_id"
+              @input=${this._onValueChanged}
+            ></ha-textfield>
+          </div>
 
-        <div class="row">
-          <ha-textfield
-            label="bmw_home Geräte-ID"
-            .value=${this._config.bmw_home_device_id || ''}
-            data-path="bmw_home_device_id"
-            @input=${this._onValueChanged}
-          ></ha-textfield>
-          <ha-textfield
-            label="bmw-cardata-ha Geräte-ID"
-            .value=${this._config.bmw_cardata_device_id || ''}
-            data-path="bmw_cardata_device_id"
-            @input=${this._onValueChanged}
-          ></ha-textfield>
+          <div class="row">
+            <ha-entity-picker
+              .hass=${this.hass}
+              .value=${this._bmwHomeEntity || ''}
+              .includeEntities=${this._bmwHomeEntities || []}
+              data-target="bmw_home_device_id"
+              @value-changed=${this._onEntityPicked}
+              label="bmw_home Entity (optional, gefiltert)"
+              allow-custom-entity
+            ></ha-entity-picker>
+            <ha-entity-picker
+              .hass=${this.hass}
+              .value=${this._bmwCardataEntity || ''}
+              .includeEntities=${this._bmwCardataEntities || []}
+              data-target="bmw_cardata_device_id"
+              @value-changed=${this._onEntityPicked}
+              label="bmw-cardata-ha Entity (optional, gefiltert)"
+              allow-custom-entity
+            ></ha-entity-picker>
+          </div>
+
+          <div class="row">
+            <ha-textfield
+              label="vehicle-status-card Resource (optional)"
+              .value=${this._config.vehicle_status_card_resource || ''}
+              data-path="vehicle_status_card_resource"
+              @input=${this._onValueChanged}
+            ></ha-textfield>
+            <ha-textfield
+              label="MapTiler API Key (optional)"
+              .value=${this._config.maptiler_api_key || ''}
+              data-path="maptiler_api_key"
+              @input=${this._onValueChanged}
+            ></ha-textfield>
+          </div>
+          <div class="hint">Nur nötig, wenn vehicle-status-card nicht über HACS geladen wird.</div>
+
+          <ha-select label="Bildmodus" .value=${imageMode} @value-changed=${this._onImageModeChanged}>
+            <mwc-list-item value="off">off (keine Bilder)</mwc-list-item>
+            <mwc-list-item value="static">static (URLs)</mwc-list-item>
+            <mwc-list-item value="ai">ai (OpenAI/Gemini/Custom)</mwc-list-item>
+          </ha-select>
+          <div class="hint">Pflicht: keine. Optional: Bilder über AI oder feste URLs.</div>
+
+          ${imageMode === 'static'
+            ? html`
+                <ha-textarea
+                  label="Statische Bild-URLs (kommagetrennt, optional)"
+                  .value=${(this._config.image?.static_urls || []).join(', ')}
+                  data-path="image.static_urls"
+                  @input=${this._onListChanged}
+                ></ha-textarea>
+                <div class="hint">Beispiel: https://.../front.jpg, https://.../rear.jpg</div>
+              `
+            : null}
+
+          ${imageMode === 'ai'
+            ? html`
+                <div class="row">
+                  <ha-select
+                    label="AI Provider"
+                    .value=${ai.provider || 'openai'}
+                    data-path="image.ai.provider"
+                    @value-changed=${this._onSelectChanged}
+                  >
+                    <mwc-list-item value="openai">OpenAI</mwc-list-item>
+                    <mwc-list-item value="gemini">Gemini (Imagen)</mwc-list-item>
+                    <mwc-list-item value="generic">Generic Endpoint</mwc-list-item>
+                  </ha-select>
+                  <ha-textfield
+                    label="AI API Key (erforderlich für OpenAI/Gemini)"
+                    .value=${ai.api_key || ''}
+                    data-path="image.ai.api_key"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
+                <div class="row">
+                  <ha-textfield
+                    label="AI Model (optional)"
+                    .value=${ai.model || ''}
+                    placeholder="OpenAI: gpt-image-1 | Gemini: imagen-3.0-generate-002"
+                    data-path="image.ai.model"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                  <ha-select
+                    label="Bildgröße (OpenAI)"
+                    .value=${ai.size || '1024x1024'}
+                    data-path="image.ai.size"
+                    @value-changed=${this._onSelectChanged}
+                  >
+                    <mwc-list-item value="1024x1024">1024x1024</mwc-list-item>
+                    <mwc-list-item value="1792x1024">1792x1024</mwc-list-item>
+                    <mwc-list-item value="1024x1792">1024x1792</mwc-list-item>
+                  </ha-select>
+                </div>
+                <div class="row">
+                  <ha-select
+                    label="Aspect Ratio (Gemini)"
+                    .value=${ai.aspect_ratio || '1:1'}
+                    data-path="image.ai.aspect_ratio"
+                    @value-changed=${this._onSelectChanged}
+                  >
+                    <mwc-list-item value="1:1">1:1</mwc-list-item>
+                    <mwc-list-item value="4:3">4:3</mwc-list-item>
+                    <mwc-list-item value="3:4">3:4</mwc-list-item>
+                    <mwc-list-item value="16:9">16:9</mwc-list-item>
+                    <mwc-list-item value="9:16">9:16</mwc-list-item>
+                  </ha-select>
+                  <ha-textfield
+                    label="Anzahl pro Prompt"
+                    .value=${ai.count ?? ''}
+                    type="number"
+                    placeholder="1"
+                    data-path="image.ai.count"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                  <ha-textfield
+                    label="Max Bilder (optional)"
+                    .value=${ai.max_images ?? ''}
+                    type="number"
+                    placeholder="8"
+                    data-path="image.ai.max_images"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
+                <ha-textarea
+                  label="Prompt Template (optional)"
+                  .value=${ai.prompt_template || ''}
+                  placeholder="High-quality photo of a {year} {color} {make} {model}, {angle}"
+                  data-path="image.ai.prompt_template"
+                  @input=${this._onValueChanged}
+                ></ha-textarea>
+                <div class="hint">Optional: nutze {angle} für Blickwinkel. Wenn leer, wird ein Default genutzt.</div>
+                <ha-textarea
+                  label="Views (kommagetrennt, optional)"
+                  .value=${(ai.views || []).join(', ')}
+                  placeholder="front 3/4 view, rear 3/4 view, side profile"
+                  data-path="image.ai.views"
+                  @input=${this._onListChanged}
+                ></ha-textarea>
+                <ha-textarea
+                  label="Prompts (kommagetrennt, optional)"
+                  .value=${(ai.prompts || []).join(', ')}
+                  placeholder="Eigene Prompts überschreiben views"
+                  data-path="image.ai.prompts"
+                  @input=${this._onListChanged}
+                ></ha-textarea>
+                <div class="hint">Optional: Bei Prompts wird {angle} ignoriert, Views sind dann optional.</div>
+              `
+            : null}
         </div>
-
-        <div class="row">
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${this._bmwHomeEntity || ''}
-            .includeEntities=${this._bmwHomeEntities || []}
-            data-target="bmw_home_device_id"
-            @value-changed=${this._onEntityPicked}
-            label="bmw_home Entity (optional, gefiltert)"
-            allow-custom-entity
-          ></ha-entity-picker>
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${this._bmwCardataEntity || ''}
-            .includeEntities=${this._bmwCardataEntities || []}
-            data-target="bmw_cardata_device_id"
-            @value-changed=${this._onEntityPicked}
-            label="bmw-cardata-ha Entity (optional, gefiltert)"
-            allow-custom-entity
-          ></ha-entity-picker>
-        </div>
-
-        <div class="row">
-          <ha-textfield
-            label="vehicle-status-card Resource (optional)"
-            .value=${this._config.vehicle_status_card_resource || ''}
-            data-path="vehicle_status_card_resource"
-            @input=${this._onValueChanged}
-          ></ha-textfield>
-          <ha-textfield
-            label="MapTiler API Key (optional)"
-            .value=${this._config.maptiler_api_key || ''}
-            data-path="maptiler_api_key"
-            @input=${this._onValueChanged}
-          ></ha-textfield>
-        </div>
-        <div class="hint">Nur nötig, wenn vehicle-status-card nicht über HACS geladen wird.</div>
-
-        <ha-select label="Bildmodus" .value=${imageMode} @value-changed=${this._onImageModeChanged}>
-          <mwc-list-item value="off">off (keine Bilder)</mwc-list-item>
-          <mwc-list-item value="static">static (URLs)</mwc-list-item>
-          <mwc-list-item value="ai">ai (OpenAI/Gemini/Custom)</mwc-list-item>
-        </ha-select>
-        <div class="hint">Pflicht: keine. Optional: Bilder über AI oder feste URLs.</div>
-
-        ${imageMode === 'static'
-          ? html`
-              <ha-textarea
-                label="Statische Bild-URLs (kommagetrennt, optional)"
-                .value=${(this._config.image?.static_urls || []).join(', ')}
-                data-path="image.static_urls"
-                @input=${this._onListChanged}
-              ></ha-textarea>
-              <div class="hint">Beispiel: https://.../front.jpg, https://.../rear.jpg</div>
-            `
-          : null}
-
-        ${imageMode === 'ai'
-          ? html`
-              <div class="row">
-                <ha-select
-                  label="AI Provider"
-                  .value=${ai.provider || 'openai'}
-                  data-path="image.ai.provider"
-                  @value-changed=${this._onSelectChanged}
-                >
-                  <mwc-list-item value="openai">OpenAI</mwc-list-item>
-                  <mwc-list-item value="gemini">Gemini (Imagen)</mwc-list-item>
-                  <mwc-list-item value="generic">Generic Endpoint</mwc-list-item>
-                </ha-select>
-                <ha-textfield
-                  label="AI API Key (erforderlich für OpenAI/Gemini)"
-                  .value=${ai.api_key || ''}
-                  data-path="image.ai.api_key"
-                  @input=${this._onValueChanged}
-                ></ha-textfield>
-              </div>
-              <div class="row">
-                <ha-textfield
-                  label="AI Model (optional)"
-                  .value=${ai.model || ''}
-                  placeholder="OpenAI: gpt-image-1 | Gemini: imagen-3.0-generate-002"
-                  data-path="image.ai.model"
-                  @input=${this._onValueChanged}
-                ></ha-textfield>
-                <ha-select
-                  label="Bildgröße (OpenAI)"
-                  .value=${ai.size || '1024x1024'}
-                  data-path="image.ai.size"
-                  @value-changed=${this._onSelectChanged}
-                >
-                  <mwc-list-item value="1024x1024">1024x1024</mwc-list-item>
-                  <mwc-list-item value="1792x1024">1792x1024</mwc-list-item>
-                  <mwc-list-item value="1024x1792">1024x1792</mwc-list-item>
-                </ha-select>
-              </div>
-              <div class="row">
-                <ha-select
-                  label="Aspect Ratio (Gemini)"
-                  .value=${ai.aspect_ratio || '1:1'}
-                  data-path="image.ai.aspect_ratio"
-                  @value-changed=${this._onSelectChanged}
-                >
-                  <mwc-list-item value="1:1">1:1</mwc-list-item>
-                  <mwc-list-item value="4:3">4:3</mwc-list-item>
-                  <mwc-list-item value="3:4">3:4</mwc-list-item>
-                  <mwc-list-item value="16:9">16:9</mwc-list-item>
-                  <mwc-list-item value="9:16">9:16</mwc-list-item>
-                </ha-select>
-                <ha-textfield
-                  label="Anzahl pro Prompt"
-                  .value=${ai.count ?? ''}
-                  type="number"
-                  placeholder="1"
-                  data-path="image.ai.count"
-                  @input=${this._onValueChanged}
-                ></ha-textfield>
-                <ha-textfield
-                  label="Max Bilder (optional)"
-                  .value=${ai.max_images ?? ''}
-                  type="number"
-                  placeholder="8"
-                  data-path="image.ai.max_images"
-                  @input=${this._onValueChanged}
-                ></ha-textfield>
-              </div>
-              <ha-textarea
-                label="Prompt Template (optional)"
-                .value=${ai.prompt_template || ''}
-                placeholder="High-quality photo of a {year} {color} {make} {model}, {angle}"
-                data-path="image.ai.prompt_template"
-                @input=${this._onValueChanged}
-              ></ha-textarea>
-              <div class="hint">Optional: nutze {angle} für Blickwinkel. Wenn leer, wird ein Default genutzt.</div>
-              <ha-textarea
-                label="Views (kommagetrennt, optional)"
-                .value=${(ai.views || []).join(', ')}
-                placeholder="front 3/4 view, rear 3/4 view, side profile"
-                data-path="image.ai.views"
-                @input=${this._onListChanged}
-              ></ha-textarea>
-              <ha-textarea
-                label="Prompts (kommagetrennt, optional)"
-                .value=${(ai.prompts || []).join(', ')}
-                placeholder="Eigene Prompts überschreiben views"
-                data-path="image.ai.prompts"
-                @input=${this._onListChanged}
-              ></ha-textarea>
-              <div class="hint">Optional: Bei Prompts wird {angle} ignoriert, Views sind dann optional.</div>
-            `
-          : null}
-      </div>
-    `;
+      `;
+    } catch (err) {
+      this._setEditorError(err);
+      return html`<div class="error">${this._editorError}</div>`;
+    }
   }
 }
 

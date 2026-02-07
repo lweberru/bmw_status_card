@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.11';
+const VERSION = '0.1.12';
 
 type HassState = {
   entity_id: string;
@@ -501,8 +501,7 @@ class BMWStatusCard extends LitElement {
         ],
         generationConfig: {
           response_mime_type: 'image/png',
-          candidate_count: count,
-          aspect_ratio: ai.aspect_ratio || '1:1'
+          candidate_count: count
         }
       };
 
@@ -1268,6 +1267,20 @@ class BMWStatusCardEditor extends LitElement {
       margin-top: 8px;
       color: var(--error-color, #b00020);
       white-space: pre-wrap;
+    }
+    select,
+    ha-textfield,
+    ha-textarea,
+    ha-entity-picker {
+      width: 100%;
+    }
+    select {
+      padding: 10px 12px;
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 6px;
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      font-size: 14px;
     }
   `;
 

@@ -1,0 +1,10 @@
+# Node / Frontend
+node_modules/
+dist/
+coverage/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log

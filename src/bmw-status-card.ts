@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.12';
+const VERSION = '0.1.13';
 
 type HassState = {
   entity_id: string;
@@ -499,9 +499,13 @@ class BMWStatusCard extends LitElement {
             parts: [{ text: prompt }]
           }
         ],
+        response_modalities: ['IMAGE'],
         generationConfig: {
-          response_mime_type: 'image/png',
-          candidate_count: count
+          candidateCount: count,
+          imageGenerationConfig: {
+            aspectRatio: ai.aspect_ratio || '1:1',
+            outputMimeType: 'image/png'
+          }
         }
       };
 
@@ -523,26 +527,36 @@ class BMWStatusCard extends LitElement {
     const inlineImages: string[] = [];
     if (Array.isArray(candidates)) {
       candidates.forEach((candidate: any) => {
+        if (candidate?.finishReason === 'SAFETY') {
+          // eslint-disable-next-line no-console
+          console.warn('[bmw-status-card] Gemini Bild durch Safety-Filter blockiert.');
+        }
         const parts = candidate?.content?.parts || [];
         parts.forEach((part: any) => {
-          const inline = part.inline_data || part.inlineData;
+          const inline = part.inlineData || part.inline_data;
           if (inline?.data) {
-            inlineImages.push(inline.data);
+            const mime = inline.mimeType || 'image/png';
+            inlineImages.push(`data:${mime};base64,${inline.data}`);
           }
         });
       });
     }
 
     if (inlineImages.length) {
-      return inlineImages.map((img) => `data:image/png;base64,${img}`);
+      return inlineImages;
     }
 
     const predictions = data?.predictions || data?.images || data?.data || [];
     if (!Array.isArray(predictions)) return [];
     return predictions
-      .map((item: any) => item.bytesBase64Encoded || item?.image?.bytesBase64Encoded || item?.b64_json || item?.url)
-      .filter(Boolean)
-      .map((img: string) => (img.startsWith('http') ? img : `data:image/png;base64,${img}`));
+      .map((item: any) => {
+        const b64 = item.bytesBase64Encoded || item?.image?.bytesBase64Encoded || item?.b64_json;
+        if (b64) return `data:image/png;base64,${b64}`;
+        if (typeof item === 'string' && item.startsWith('http')) return item;
+        if (item?.url) return item.url;
+        return null;
+      })
+      .filter(Boolean) as string[];
   }
 
   private async _fetchGenericImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {

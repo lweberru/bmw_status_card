@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.10';
+const VERSION = '0.1.11';
 
 type HassState = {
   entity_id: string;
@@ -352,6 +352,12 @@ class BMWStatusCard extends LitElement {
     }
 
     if (imageConfig.mode === 'ai' && imageConfig.ai) {
+      const provider = imageConfig.ai.provider || 'openai';
+      if ((provider === 'openai' || provider === 'gemini') && !imageConfig.ai.api_key) {
+        // eslint-disable-next-line no-console
+        console.warn('[bmw-status-card] image.ai.api_key fehlt – überspringe Bildgenerierung.');
+        return [];
+      }
       // eslint-disable-next-line no-console
       console.debug('[bmw-status-card] generating AI images', imageConfig.ai);
       return this._generateAiImages(vehicleInfo, imageConfig.ai);
@@ -479,17 +485,24 @@ class BMWStatusCard extends LitElement {
 
   private async _fetchGeminiImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
     if (!ai.api_key) throw new Error('image.ai.api_key fehlt (Gemini).');
-    const model = ai.model || 'imagen-3.0-generate-002';
+    const model = ai.model || 'gemini-3-pro-image';
     const endpoint =
-      ai.endpoint || `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${ai.api_key}`;
+      ai.endpoint ||
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${ai.api_key}`;
 
     const body =
       ai.request_body ||
       {
-        instances: [{ prompt }],
-        parameters: {
-          sampleCount: count,
-          aspectRatio: ai.aspect_ratio || '1:1'
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }]
+          }
+        ],
+        generationConfig: {
+          response_mime_type: 'image/png',
+          candidate_count: count,
+          aspect_ratio: ai.aspect_ratio || '1:1'
         }
       };
 
@@ -507,6 +520,24 @@ class BMWStatusCard extends LitElement {
     }
 
     const data = await response.json();
+    const candidates = data?.candidates || [];
+    const inlineImages: string[] = [];
+    if (Array.isArray(candidates)) {
+      candidates.forEach((candidate: any) => {
+        const parts = candidate?.content?.parts || [];
+        parts.forEach((part: any) => {
+          const inline = part.inline_data || part.inlineData;
+          if (inline?.data) {
+            inlineImages.push(inline.data);
+          }
+        });
+      });
+    }
+
+    if (inlineImages.length) {
+      return inlineImages.map((img) => `data:image/png;base64,${img}`);
+    }
+
     const predictions = data?.predictions || data?.images || data?.data || [];
     if (!Array.isArray(predictions)) return [];
     return predictions

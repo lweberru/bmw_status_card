@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.6';
+const VERSION = '0.1.7';
 
 type HassState = {
   entity_id: string;
@@ -1389,17 +1389,13 @@ class BMWStatusCardEditor extends LitElement {
             @input=${this._onValueChanged}
           ></ha-textfield>
         </div>
+        <div class="hint">Nur nötig, wenn vehicle-status-card nicht über HACS geladen wird.</div>
 
-        <ha-combo-box
-          label="Bildmodus"
-          .items=${['off (keine Bilder)', 'static (URLs)', 'ai (OpenAI/Gemini/Custom)']}
-          .value=${imageMode === 'off' ? 'off (keine Bilder)' : imageMode === 'static' ? 'static (URLs)' : 'ai (OpenAI/Gemini/Custom)'}
-          @value-changed=${(ev: CustomEvent) => {
-            const raw = ev.detail?.value as string;
-            const value = raw?.startsWith('static') ? 'static' : raw?.startsWith('ai') ? 'ai' : 'off';
-            this._onImageModeChanged({ ...ev, detail: { value } } as CustomEvent);
-          }}
-        ></ha-combo-box>
+        <ha-select label="Bildmodus" .value=${imageMode} @value-changed=${this._onImageModeChanged}>
+          <mwc-list-item value="off">off (keine Bilder)</mwc-list-item>
+          <mwc-list-item value="static">static (URLs)</mwc-list-item>
+          <mwc-list-item value="ai">ai (OpenAI/Gemini/Custom)</mwc-list-item>
+        </ha-select>
         <div class="hint">Pflicht: keine. Optional: Bilder über AI oder feste URLs.</div>
 
         ${imageMode === 'static'
@@ -1417,13 +1413,16 @@ class BMWStatusCardEditor extends LitElement {
         ${imageMode === 'ai'
           ? html`
               <div class="row">
-                <ha-combo-box
+                <ha-select
                   label="AI Provider"
-                  .items=${['openai', 'gemini', 'generic']}
                   .value=${ai.provider || 'openai'}
                   data-path="image.ai.provider"
                   @value-changed=${this._onSelectChanged}
-                ></ha-combo-box>
+                >
+                  <mwc-list-item value="openai">OpenAI</mwc-list-item>
+                  <mwc-list-item value="gemini">Gemini (Imagen)</mwc-list-item>
+                  <mwc-list-item value="generic">Generic Endpoint</mwc-list-item>
+                </ha-select>
                 <ha-textfield
                   label="AI API Key (erforderlich für OpenAI/Gemini)"
                   .value=${ai.api_key || ''}
@@ -1439,22 +1438,30 @@ class BMWStatusCardEditor extends LitElement {
                   data-path="image.ai.model"
                   @input=${this._onValueChanged}
                 ></ha-textfield>
-                <ha-combo-box
+                <ha-select
                   label="Bildgröße (OpenAI)"
-                  .items=${['1024x1024', '1792x1024', '1024x1792']}
                   .value=${ai.size || '1024x1024'}
                   data-path="image.ai.size"
                   @value-changed=${this._onSelectChanged}
-                ></ha-combo-box>
+                >
+                  <mwc-list-item value="1024x1024">1024x1024</mwc-list-item>
+                  <mwc-list-item value="1792x1024">1792x1024</mwc-list-item>
+                  <mwc-list-item value="1024x1792">1024x1792</mwc-list-item>
+                </ha-select>
               </div>
               <div class="row">
-                <ha-combo-box
+                <ha-select
                   label="Aspect Ratio (Gemini)"
-                  .items=${['1:1', '4:3', '3:4', '16:9', '9:16']}
                   .value=${ai.aspect_ratio || '1:1'}
                   data-path="image.ai.aspect_ratio"
                   @value-changed=${this._onSelectChanged}
-                ></ha-combo-box>
+                >
+                  <mwc-list-item value="1:1">1:1</mwc-list-item>
+                  <mwc-list-item value="4:3">4:3</mwc-list-item>
+                  <mwc-list-item value="3:4">3:4</mwc-list-item>
+                  <mwc-list-item value="16:9">16:9</mwc-list-item>
+                  <mwc-list-item value="9:16">9:16</mwc-list-item>
+                </ha-select>
                 <ha-textfield
                   label="Anzahl pro Prompt"
                   .value=${ai.count ?? ''}

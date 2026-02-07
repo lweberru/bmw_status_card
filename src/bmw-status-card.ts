@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 
 type HassState = {
   entity_id: string;
@@ -1143,11 +1143,15 @@ class BMWStatusCard extends LitElement {
 class BMWStatusCardEditor extends LitElement {
   static properties = {
     hass: { attribute: false },
-    _config: { state: true }
+    _config: { state: true },
+    _bmwHomeEntity: { state: true },
+    _bmwCardataEntity: { state: true }
   };
 
   private _hass?: HomeAssistant;
   private _config?: BMWStatusCardConfig;
+  private _bmwHomeEntity?: string;
+  private _bmwCardataEntity?: string;
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
@@ -1178,6 +1182,11 @@ class BMWStatusCardEditor extends LitElement {
     }
     ha-textarea {
       min-height: 80px;
+    }
+    .hint {
+      color: var(--secondary-text-color);
+      font-size: 12px;
+      margin-top: -6px;
     }
   `;
 
@@ -1230,7 +1239,8 @@ class BMWStatusCardEditor extends LitElement {
   }
 
   private _onImageModeChanged(ev: CustomEvent): void {
-    const value = (ev.target as any).value as 'off' | 'static' | 'ai';
+    const target = ev.target as any;
+    const value = (ev.detail?.value ?? target?.value) as 'off' | 'static' | 'ai';
     if (!this._config) return;
     const config = { ...this._config };
     if (value === 'off') {
@@ -1242,6 +1252,14 @@ class BMWStatusCardEditor extends LitElement {
     }
     this._config = config;
     this._emitConfigChanged();
+  }
+
+  private _onSelectChanged(ev: CustomEvent): void {
+    const target = ev.target as any;
+    const path = target?.dataset?.path;
+    if (!path) return;
+    const value = ev.detail?.value ?? target?.value;
+    this._setConfigValue(path, value);
   }
 
   private _onListChanged(ev: CustomEvent): void {
@@ -1256,6 +1274,31 @@ class BMWStatusCardEditor extends LitElement {
     this._setConfigValue(path, list.length ? list : undefined);
   }
 
+  private async _resolveDeviceIdFromEntity(entityId: string, targetKey: string): Promise<void> {
+    if (!this.hass) return;
+    try {
+      const entry = await this.hass.callWS({ type: 'config/entity_registry/get', entity_id: entityId });
+      if (entry?.device_id) {
+        this._setConfigValue(targetKey, entry.device_id);
+      }
+    } catch (_) {
+      // ignore lookup errors
+    }
+  }
+
+  private async _onEntityPicked(ev: CustomEvent): Promise<void> {
+    const target = ev.target as any;
+    const entityId = ev.detail?.value ?? target?.value;
+    const targetKey = target?.dataset?.target;
+    if (!entityId || !targetKey) return;
+    if (targetKey === 'bmw_home_device_id') {
+      this._bmwHomeEntity = entityId;
+    } else if (targetKey === 'bmw_cardata_device_id') {
+      this._bmwCardataEntity = entityId;
+    }
+    await this._resolveDeviceIdFromEntity(entityId, targetKey);
+  }
+
   protected render() {
     if (!this._config) return html``;
 
@@ -1267,20 +1310,37 @@ class BMWStatusCardEditor extends LitElement {
         <ha-alert alert-type="info">Benötigt bmw_home und bmw-cardata-ha Geräte-IDs.</ha-alert>
 
         <div class="row">
-          <ha-device-picker
-            .hass=${this.hass}
+          <ha-textfield
+            label="bmw_home Geräte-ID"
             .value=${this._config.bmw_home_device_id || ''}
             data-path="bmw_home_device_id"
-            @value-changed=${this._onValueChanged}
-            label="bmw_home Gerät"
-          ></ha-device-picker>
-          <ha-device-picker
-            .hass=${this.hass}
+            @input=${this._onValueChanged}
+          ></ha-textfield>
+          <ha-textfield
+            label="bmw-cardata-ha Geräte-ID"
             .value=${this._config.bmw_cardata_device_id || ''}
             data-path="bmw_cardata_device_id"
-            @value-changed=${this._onValueChanged}
-            label="bmw-cardata-ha Gerät"
-          ></ha-device-picker>
+            @input=${this._onValueChanged}
+          ></ha-textfield>
+        </div>
+
+        <div class="row">
+          <ha-entity-picker
+            .hass=${this.hass}
+            .value=${this._bmwHomeEntity || ''}
+            data-target="bmw_home_device_id"
+            @value-changed=${this._onEntityPicked}
+            label="bmw_home Entity (optional)"
+            allow-custom-entity
+          ></ha-entity-picker>
+          <ha-entity-picker
+            .hass=${this.hass}
+            .value=${this._bmwCardataEntity || ''}
+            data-target="bmw_cardata_device_id"
+            @value-changed=${this._onEntityPicked}
+            label="bmw-cardata-ha Entity (optional)"
+            allow-custom-entity
+          ></ha-entity-picker>
         </div>
 
         <div class="row">
@@ -1298,35 +1358,41 @@ class BMWStatusCardEditor extends LitElement {
           ></ha-textfield>
         </div>
 
-        <ha-textfield
-          label="Bildmodus"
-          .value=${imageMode}
-          @input=${this._onImageModeChanged}
-          helper="off | static | ai"
-        ></ha-textfield>
+        <ha-select label="Bildmodus" .value=${imageMode} @selected=${this._onImageModeChanged} @value-changed=${this._onImageModeChanged}>
+          <mwc-list-item value="off">off (keine Bilder)</mwc-list-item>
+          <mwc-list-item value="static">static (URLs)</mwc-list-item>
+          <mwc-list-item value="ai">ai (OpenAI/Gemini/Custom)</mwc-list-item>
+        </ha-select>
+        <div class="hint">Pflicht: keine. Optional: Bilder über AI oder feste URLs.</div>
 
         ${imageMode === 'static'
           ? html`
               <ha-textarea
-                label="Statische Bild-URLs (kommagetrennt)"
+                label="Statische Bild-URLs (kommagetrennt, optional)"
                 .value=${(this._config.image?.static_urls || []).join(', ')}
                 data-path="image.static_urls"
                 @input=${this._onListChanged}
               ></ha-textarea>
+              <div class="hint">Beispiel: https://.../front.jpg, https://.../rear.jpg</div>
             `
           : null}
 
         ${imageMode === 'ai'
           ? html`
               <div class="row">
-                <ha-textfield
-                  label="AI Provider (openai | gemini | generic)"
-                  .value=${ai.provider || ''}
+                <ha-select
+                  label="AI Provider"
+                  .value=${ai.provider || 'openai'}
                   data-path="image.ai.provider"
-                  @input=${this._onValueChanged}
-                ></ha-textfield>
+                  @selected=${this._onSelectChanged}
+                  @value-changed=${this._onSelectChanged}
+                >
+                  <mwc-list-item value="openai">OpenAI</mwc-list-item>
+                  <mwc-list-item value="gemini">Gemini (Imagen)</mwc-list-item>
+                  <mwc-list-item value="generic">Generic Endpoint</mwc-list-item>
+                </ha-select>
                 <ha-textfield
-                  label="AI API Key"
+                  label="AI API Key (erforderlich für OpenAI/Gemini)"
                   .value=${ai.api_key || ''}
                   data-path="image.ai.api_key"
                   @input=${this._onValueChanged}
@@ -1334,56 +1400,78 @@ class BMWStatusCardEditor extends LitElement {
               </div>
               <div class="row">
                 <ha-textfield
-                  label="AI Model"
+                  label="AI Model (optional)"
                   .value=${ai.model || ''}
+                  placeholder="OpenAI: gpt-image-1 | Gemini: imagen-3.0-generate-002"
                   data-path="image.ai.model"
                   @input=${this._onValueChanged}
                 ></ha-textfield>
-                <ha-textfield
-                  label="AI Size (OpenAI)"
-                  .value=${ai.size || ''}
+                <ha-select
+                  label="Bildgröße (OpenAI)"
+                  .value=${ai.size || '1024x1024'}
                   data-path="image.ai.size"
-                  @input=${this._onValueChanged}
-                ></ha-textfield>
+                  @selected=${this._onSelectChanged}
+                  @value-changed=${this._onSelectChanged}
+                >
+                  <mwc-list-item value="1024x1024">1024x1024</mwc-list-item>
+                  <mwc-list-item value="1792x1024">1792x1024</mwc-list-item>
+                  <mwc-list-item value="1024x1792">1024x1792</mwc-list-item>
+                </ha-select>
               </div>
               <div class="row">
-                <ha-textfield
+                <ha-select
                   label="Aspect Ratio (Gemini)"
-                  .value=${ai.aspect_ratio || ''}
+                  .value=${ai.aspect_ratio || '1:1'}
                   data-path="image.ai.aspect_ratio"
-                  @input=${this._onValueChanged}
-                ></ha-textfield>
+                  @selected=${this._onSelectChanged}
+                  @value-changed=${this._onSelectChanged}
+                >
+                  <mwc-list-item value="1:1">1:1</mwc-list-item>
+                  <mwc-list-item value="4:3">4:3</mwc-list-item>
+                  <mwc-list-item value="3:4">3:4</mwc-list-item>
+                  <mwc-list-item value="16:9">16:9</mwc-list-item>
+                  <mwc-list-item value="9:16">9:16</mwc-list-item>
+                </ha-select>
                 <ha-textfield
-                  label="Count pro Prompt"
+                  label="Anzahl pro Prompt"
                   .value=${ai.count ?? ''}
+                  type="number"
+                  placeholder="1"
                   data-path="image.ai.count"
                   @input=${this._onValueChanged}
                 ></ha-textfield>
                 <ha-textfield
-                  label="Max Bilder"
+                  label="Max Bilder (optional)"
                   .value=${ai.max_images ?? ''}
+                  type="number"
+                  placeholder="8"
                   data-path="image.ai.max_images"
                   @input=${this._onValueChanged}
                 ></ha-textfield>
               </div>
               <ha-textarea
-                label="Prompt Template"
+                label="Prompt Template (optional)"
                 .value=${ai.prompt_template || ''}
+                placeholder="High-quality photo of a {year} {color} {make} {model}, {angle}"
                 data-path="image.ai.prompt_template"
                 @input=${this._onValueChanged}
               ></ha-textarea>
+              <div class="hint">Optional: nutze {angle} für Blickwinkel. Wenn leer, wird ein Default genutzt.</div>
               <ha-textarea
-                label="Views (kommagetrennt)"
+                label="Views (kommagetrennt, optional)"
                 .value=${(ai.views || []).join(', ')}
+                placeholder="front 3/4 view, rear 3/4 view, side profile"
                 data-path="image.ai.views"
                 @input=${this._onListChanged}
               ></ha-textarea>
               <ha-textarea
                 label="Prompts (kommagetrennt, optional)"
                 .value=${(ai.prompts || []).join(', ')}
+                placeholder="Eigene Prompts überschreiben views"
                 data-path="image.ai.prompts"
                 @input=${this._onListChanged}
               ></ha-textarea>
+              <div class="hint">Optional: Bei Prompts wird {angle} ignoriert, Views sind dann optional.</div>
             `
           : null}
       </div>

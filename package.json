@@ -1,11 +1,13 @@
 {
   "name": "bmw-status-card",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "BMW Status Card for Home Assistant (auto-config using bmw_home + bmw-cardata-ha)",
   "type": "module",
   "scripts": {
     "build": "rollup -c rollup.config.js",
-    "start": "rollup -c rollup.config.js --watch"
+    "start": "rollup -c rollup.config.js --watch",
+    "sync-version": "node scripts/sync-version.cjs",
+    "release:prep": "npm run sync-version && npm run build"
   },
   "keywords": [
     "home-assistant",

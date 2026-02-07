@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 type HassState = {
   entity_id: string;
@@ -161,6 +161,18 @@ class BMWStatusCard extends LitElement {
 
   public getCardSize(): number {
     return 6;
+  }
+
+  public static getConfigElement(): HTMLElement {
+    return document.createElement('bmw-status-card-editor');
+  }
+
+  public static getStubConfig(): BMWStatusCardConfig {
+    return {
+      type: `custom:${CARD_NAME}`,
+      bmw_home_device_id: '',
+      bmw_cardata_device_id: ''
+    } as BMWStatusCardConfig;
   }
 
   private async _ensureVehicleCardLoaded(): Promise<void> {
@@ -1128,7 +1140,259 @@ class BMWStatusCard extends LitElement {
   }
 }
 
+class BMWStatusCardEditor extends LitElement {
+  static properties = {
+    hass: { attribute: false },
+    _config: { state: true }
+  };
+
+  private _hass?: HomeAssistant;
+  private _config?: BMWStatusCardConfig;
+
+  public set hass(hass: HomeAssistant) {
+    this._hass = hass;
+  }
+
+  public get hass(): HomeAssistant {
+    return this._hass as HomeAssistant;
+  }
+
+  public setConfig(config: BMWStatusCardConfig): void {
+    this._config = { ...config };
+  }
+
+  static styles = css`
+    .form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 8px 0;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    ha-alert {
+      margin-bottom: 8px;
+    }
+    ha-textarea {
+      min-height: 80px;
+    }
+  `;
+
+  private _emitConfigChanged(): void {
+    this.dispatchEvent(
+      new CustomEvent('config-changed', {
+        detail: { config: this._config },
+        bubbles: true,
+        composed: true
+      })
+    );
+  }
+
+  private _setConfigValue(path: string, value: any): void {
+    if (!this._config) return;
+    const keys = path.split('.');
+    const stack: any[] = [];
+    let obj: any = { ...this._config };
+    let cursor = obj;
+    for (let i = 0; i < keys.length - 1; i += 1) {
+      const key = keys[i];
+      stack.push({ parent: cursor, key });
+      cursor[key] = { ...(cursor[key] || {}) };
+      cursor = cursor[key];
+    }
+    const lastKey = keys[keys.length - 1];
+    if (value === '' || value === undefined || value === null) {
+      delete cursor[lastKey];
+    } else {
+      cursor[lastKey] = value;
+    }
+
+    // cleanup empty objects
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+      const { parent, key } = stack[i];
+      if (parent[key] && Object.keys(parent[key]).length === 0) {
+        delete parent[key];
+      }
+    }
+
+    this._config = obj as BMWStatusCardConfig;
+    this._emitConfigChanged();
+  }
+
+  private _onValueChanged(ev: CustomEvent): void {
+    const target = ev.target as any;
+    const path = target?.dataset?.path;
+    if (!path) return;
+    this._setConfigValue(path, target.value);
+  }
+
+  private _onImageModeChanged(ev: CustomEvent): void {
+    const value = (ev.target as any).value as 'off' | 'static' | 'ai';
+    if (!this._config) return;
+    const config = { ...this._config };
+    if (value === 'off') {
+      delete config.image;
+    } else if (value === 'static') {
+      config.image = { ...(config.image || {}), mode: 'static', static_urls: config.image?.static_urls || [] };
+    } else {
+      config.image = { ...(config.image || {}), mode: 'ai', ai: config.image?.ai || {} };
+    }
+    this._config = config;
+    this._emitConfigChanged();
+  }
+
+  private _onListChanged(ev: CustomEvent): void {
+    const target = ev.target as any;
+    const path = target?.dataset?.path;
+    if (!path) return;
+    const raw = (target.value as string) || '';
+    const list = raw
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    this._setConfigValue(path, list.length ? list : undefined);
+  }
+
+  protected render() {
+    if (!this._config) return html``;
+
+    const imageMode = this._config.image?.mode || 'off';
+    const ai = this._config.image?.ai || {};
+
+    return html`
+      <div class="form">
+        <ha-alert alert-type="info">Benötigt bmw_home und bmw-cardata-ha Geräte-IDs.</ha-alert>
+
+        <div class="row">
+          <ha-device-picker
+            .hass=${this.hass}
+            .value=${this._config.bmw_home_device_id || ''}
+            data-path="bmw_home_device_id"
+            @value-changed=${this._onValueChanged}
+            label="bmw_home Gerät"
+          ></ha-device-picker>
+          <ha-device-picker
+            .hass=${this.hass}
+            .value=${this._config.bmw_cardata_device_id || ''}
+            data-path="bmw_cardata_device_id"
+            @value-changed=${this._onValueChanged}
+            label="bmw-cardata-ha Gerät"
+          ></ha-device-picker>
+        </div>
+
+        <div class="row">
+          <ha-textfield
+            label="vehicle-status-card Resource (optional)"
+            .value=${this._config.vehicle_status_card_resource || ''}
+            data-path="vehicle_status_card_resource"
+            @input=${this._onValueChanged}
+          ></ha-textfield>
+          <ha-textfield
+            label="MapTiler API Key (optional)"
+            .value=${this._config.maptiler_api_key || ''}
+            data-path="maptiler_api_key"
+            @input=${this._onValueChanged}
+          ></ha-textfield>
+        </div>
+
+        <ha-textfield
+          label="Bildmodus"
+          .value=${imageMode}
+          @input=${this._onImageModeChanged}
+          helper="off | static | ai"
+        ></ha-textfield>
+
+        ${imageMode === 'static'
+          ? html`
+              <ha-textarea
+                label="Statische Bild-URLs (kommagetrennt)"
+                .value=${(this._config.image?.static_urls || []).join(', ')}
+                data-path="image.static_urls"
+                @input=${this._onListChanged}
+              ></ha-textarea>
+            `
+          : null}
+
+        ${imageMode === 'ai'
+          ? html`
+              <div class="row">
+                <ha-textfield
+                  label="AI Provider (openai | gemini | generic)"
+                  .value=${ai.provider || ''}
+                  data-path="image.ai.provider"
+                  @input=${this._onValueChanged}
+                ></ha-textfield>
+                <ha-textfield
+                  label="AI API Key"
+                  .value=${ai.api_key || ''}
+                  data-path="image.ai.api_key"
+                  @input=${this._onValueChanged}
+                ></ha-textfield>
+              </div>
+              <div class="row">
+                <ha-textfield
+                  label="AI Model"
+                  .value=${ai.model || ''}
+                  data-path="image.ai.model"
+                  @input=${this._onValueChanged}
+                ></ha-textfield>
+                <ha-textfield
+                  label="AI Size (OpenAI)"
+                  .value=${ai.size || ''}
+                  data-path="image.ai.size"
+                  @input=${this._onValueChanged}
+                ></ha-textfield>
+              </div>
+              <div class="row">
+                <ha-textfield
+                  label="Aspect Ratio (Gemini)"
+                  .value=${ai.aspect_ratio || ''}
+                  data-path="image.ai.aspect_ratio"
+                  @input=${this._onValueChanged}
+                ></ha-textfield>
+                <ha-textfield
+                  label="Count pro Prompt"
+                  .value=${ai.count ?? ''}
+                  data-path="image.ai.count"
+                  @input=${this._onValueChanged}
+                ></ha-textfield>
+                <ha-textfield
+                  label="Max Bilder"
+                  .value=${ai.max_images ?? ''}
+                  data-path="image.ai.max_images"
+                  @input=${this._onValueChanged}
+                ></ha-textfield>
+              </div>
+              <ha-textarea
+                label="Prompt Template"
+                .value=${ai.prompt_template || ''}
+                data-path="image.ai.prompt_template"
+                @input=${this._onValueChanged}
+              ></ha-textarea>
+              <ha-textarea
+                label="Views (kommagetrennt)"
+                .value=${(ai.views || []).join(', ')}
+                data-path="image.ai.views"
+                @input=${this._onListChanged}
+              ></ha-textarea>
+              <ha-textarea
+                label="Prompts (kommagetrennt, optional)"
+                .value=${(ai.prompts || []).join(', ')}
+                data-path="image.ai.prompts"
+                @input=${this._onListChanged}
+              ></ha-textarea>
+            `
+          : null}
+      </div>
+    `;
+  }
+}
+
 customElements.define(CARD_NAME, BMWStatusCard);
+customElements.define('bmw-status-card-editor', BMWStatusCardEditor);
 
 (window as any).customCards = (window as any).customCards || [];
 (window as any).customCards.push({

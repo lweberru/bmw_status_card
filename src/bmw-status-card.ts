@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.14';
+const VERSION = '0.1.15';
 
 type HassState = {
   entity_id: string;
@@ -485,7 +485,7 @@ class BMWStatusCard extends LitElement {
 
   private async _fetchGeminiImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
     if (!ai.api_key) throw new Error('image.ai.api_key fehlt (Gemini).');
-    const model = ai.model || 'gemini-3-pro-image';
+    const model = ai.model || 'imagen-3.0-generate-002';
     const endpoint =
       ai.endpoint ||
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${ai.api_key}`;
@@ -1221,7 +1221,10 @@ class BMWStatusCardEditor extends LitElement {
     _bmwCardataEntity: { state: true },
     _bmwHomeEntities: { state: true },
     _bmwCardataEntities: { state: true },
-    _editorError: { state: true }
+    _editorError: { state: true },
+    _geminiModels: { state: true },
+    _geminiModelsLoading: { state: true },
+    _geminiModelsError: { state: true }
   };
 
   private _hass?: HomeAssistant;
@@ -1231,6 +1234,11 @@ class BMWStatusCardEditor extends LitElement {
   private _bmwHomeEntities?: string[];
   private _bmwCardataEntities?: string[];
   private _editorError?: string;
+  private _geminiModels?: string[];
+  private _geminiModelsLoading = false;
+  private _geminiModelsError?: string;
+  private _geminiModelsKey?: string;
+  private _geminiModelsTimer?: number;
   private static _errorHooked = false;
 
   public set hass(hass: HomeAssistant) {
@@ -1255,6 +1263,7 @@ class BMWStatusCardEditor extends LitElement {
 
   public setConfig(config: BMWStatusCardConfig): void {
     this._config = { ...config, type: config.type || `custom:${CARD_NAME}` };
+    this._maybeLoadGeminiModels();
   }
 
   private async _loadIntegrationEntities(): Promise<void> {
@@ -1388,6 +1397,7 @@ class BMWStatusCardEditor extends LitElement {
 
       this._config = obj as BMWStatusCardConfig;
       this._emitConfigChanged();
+      this._maybeLoadGeminiModels(path, value);
     } catch (err) {
       this._setEditorError(err);
     }
@@ -1425,6 +1435,58 @@ class BMWStatusCardEditor extends LitElement {
     if (!path) return;
     const value = ev.detail?.value ?? target?.value;
     this._setConfigValue(path, value);
+  }
+
+  private _maybeLoadGeminiModels(changedPath?: string, changedValue?: any): void {
+    const provider = this._config?.image?.ai?.provider || 'openai';
+    if (provider !== 'gemini') return;
+    const apiKey =
+      changedPath === 'image.ai.api_key'
+        ? String(changedValue || '')
+        : String(this._config?.image?.ai?.api_key || '');
+
+    if (!apiKey || apiKey.length < 20) return;
+    if (this._geminiModelsLoading) return;
+    if (this._geminiModelsKey === apiKey && this._geminiModels?.length) return;
+
+    if (this._geminiModelsTimer) {
+      window.clearTimeout(this._geminiModelsTimer);
+    }
+    this._geminiModelsTimer = window.setTimeout(() => {
+      this._loadGeminiModels(apiKey);
+    }, 400);
+  }
+
+  private async _loadGeminiModels(apiKey: string): Promise<void> {
+    this._geminiModelsLoading = true;
+    this._geminiModelsError = undefined;
+    this._geminiModelsKey = apiKey;
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`ListModels Fehler: ${response.status} ${text}`);
+      }
+      const data = await response.json();
+      const models = (data?.models || []) as Array<{ name?: string; supportedGenerationMethods?: string[] }>;
+      const supported = models
+        .filter((model) => (model.supportedGenerationMethods || []).includes('generateContent'))
+        .map((model) => model.name || '')
+        .filter(Boolean)
+        .map((name) => name.replace(/^models\//, ''))
+        .filter(Boolean)
+        .sort();
+
+      this._geminiModels = supported;
+    } catch (err: any) {
+      this._geminiModelsError = err?.message || String(err);
+      this._geminiModels = undefined;
+      // eslint-disable-next-line no-console
+      console.warn('[bmw-status-card] Gemini ListModels fehlgeschlagen:', err);
+    } finally {
+      this._geminiModelsLoading = false;
+      this.requestUpdate();
+    }
   }
 
   private _onListChanged(ev: CustomEvent): void {
@@ -1469,6 +1531,7 @@ class BMWStatusCardEditor extends LitElement {
 
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
+    const aiProvider = ai.provider || 'openai';
     try {
       return html`
         <div class="form">
@@ -1557,7 +1620,7 @@ class BMWStatusCardEditor extends LitElement {
                     <select
                       data-path="image.ai.provider"
                       @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                      .value=${ai.provider || 'openai'}
+                      .value=${aiProvider}
                     >
                       <option value="openai">OpenAI</option>
                       <option value="gemini">Gemini (Imagen)</option>
@@ -1572,13 +1635,31 @@ class BMWStatusCardEditor extends LitElement {
                   ></ha-textfield>
                 </div>
                 <div class="row">
-                  <ha-textfield
-                    label="AI Model (optional)"
-                    .value=${ai.model || ''}
-                    placeholder="OpenAI: gpt-image-1 | Gemini: imagen-3.0-generate-002"
-                    data-path="image.ai.model"
-                    @input=${this._onValueChanged}
-                  ></ha-textfield>
+                  ${aiProvider === 'gemini' && this._geminiModels?.length
+                    ? html`
+                        <div class="field">
+                          <label class="hint">Gemini Model (aus ListModels)</label>
+                          <select
+                            data-path="image.ai.model"
+                            @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                            .value=${ai.model || ''}
+                          >
+                            <option value="">Auto (Standard)</option>
+                            ${this._geminiModels.map(
+                              (model) => html`<option value=${model}>${model}</option>`
+                            )}
+                          </select>
+                        </div>
+                      `
+                    : html`
+                        <ha-textfield
+                          label="AI Model (optional)"
+                          .value=${ai.model || ''}
+                          placeholder="OpenAI: gpt-image-1 | Gemini: imagen-3.0-generate-002"
+                          data-path="image.ai.model"
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                      `}
                   <div class="field">
                     <label class="hint">Bildgröße (OpenAI)</label>
                     <select
@@ -1592,6 +1673,12 @@ class BMWStatusCardEditor extends LitElement {
                     </select>
                   </div>
                 </div>
+                ${aiProvider === 'gemini' && this._geminiModelsLoading
+                  ? html`<div class="hint">Lade Gemini-Modelle…</div>`
+                  : null}
+                ${aiProvider === 'gemini' && this._geminiModelsError
+                  ? html`<div class="hint">${this._geminiModelsError}</div>`
+                  : null}
                 <div class="row">
                   <div class="field">
                     <label class="hint">Aspect Ratio (Gemini)</label>

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.13';
+const VERSION = '0.1.14';
 
 type HassState = {
   entity_id: string;
@@ -490,36 +490,58 @@ class BMWStatusCard extends LitElement {
       ai.endpoint ||
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${ai.api_key}`;
 
-    const body =
-      ai.request_body ||
-      {
+    const buildBody = (withResponseModalities: boolean) => {
+      const baseBody: any = {
         contents: [
           {
             role: 'user',
             parts: [{ text: prompt }]
           }
         ],
-        response_modalities: ['IMAGE'],
         generationConfig: {
-          candidateCount: count,
-          imageGenerationConfig: {
-            aspectRatio: ai.aspect_ratio || '1:1',
-            outputMimeType: 'image/png'
-          }
+          candidateCount: count
         }
       };
+      if (withResponseModalities) {
+        baseBody.responseModalities = ['IMAGE'];
+      }
+      return baseBody;
+    };
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
+    const body = ai.request_body || buildBody(true);
+
+    const doFetch = async (payload: any) => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      return response;
+    };
+
+    let response = await doFetch(body);
+    let responseText = '';
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Gemini Fehler: ${response.status} ${text}`);
+      responseText = await response.text();
+      const shouldFallback =
+        !ai.request_body &&
+        (responseText.includes('response_modalities') ||
+          responseText.includes('responseModalities') ||
+          responseText.includes('imageGenerationConfig') ||
+          responseText.includes('generation_config'));
+
+      if (shouldFallback) {
+        response = await doFetch(buildBody(false));
+        if (!response.ok) {
+          const fallbackText = await response.text();
+          throw new Error(`Gemini Fehler: ${response.status} ${fallbackText}`);
+        }
+      } else {
+        throw new Error(`Gemini Fehler: ${response.status} ${responseText}`);
+      }
     }
 
     const data = await response.json();
@@ -1266,6 +1288,14 @@ class BMWStatusCardEditor extends LitElement {
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 12px;
     }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .field label {
+      margin: 0;
+    }
     ha-alert {
       margin-bottom: 8px;
     }
@@ -1497,12 +1527,14 @@ class BMWStatusCardEditor extends LitElement {
           </div>
           <div class="hint">Nur nötig, wenn vehicle-status-card nicht über HACS geladen wird.</div>
 
-          <label class="hint">Bildmodus</label>
-          <select @change=${(ev: Event) => this._onImageModeChanged(ev as any)} .value=${imageMode}>
-            <option value="off">off (keine Bilder)</option>
-            <option value="static">static (URLs)</option>
-            <option value="ai">ai (OpenAI/Gemini/Custom)</option>
-          </select>
+          <div class="field">
+            <label class="hint">Bildmodus</label>
+            <select @change=${(ev: Event) => this._onImageModeChanged(ev as any)} .value=${imageMode}>
+              <option value="off">off (keine Bilder)</option>
+              <option value="static">static (URLs)</option>
+              <option value="ai">ai (OpenAI/Gemini/Custom)</option>
+            </select>
+          </div>
           <div class="hint">Pflicht: keine. Optional: Bilder über AI oder feste URLs.</div>
 
           ${imageMode === 'static'
@@ -1520,16 +1552,18 @@ class BMWStatusCardEditor extends LitElement {
           ${imageMode === 'ai'
             ? html`
                 <div class="row">
-                  <label class="hint">AI Provider</label>
-                  <select
-                    data-path="image.ai.provider"
-                    @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                    .value=${ai.provider || 'openai'}
-                  >
-                    <option value="openai">OpenAI</option>
-                    <option value="gemini">Gemini (Imagen)</option>
-                    <option value="generic">Generic Endpoint</option>
-                  </select>
+                  <div class="field">
+                    <label class="hint">AI Provider</label>
+                    <select
+                      data-path="image.ai.provider"
+                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                      .value=${ai.provider || 'openai'}
+                    >
+                      <option value="openai">OpenAI</option>
+                      <option value="gemini">Gemini (Imagen)</option>
+                      <option value="generic">Generic Endpoint</option>
+                    </select>
+                  </div>
                   <ha-textfield
                     label="AI API Key (erforderlich für OpenAI/Gemini)"
                     .value=${ai.api_key || ''}
@@ -1545,30 +1579,34 @@ class BMWStatusCardEditor extends LitElement {
                     data-path="image.ai.model"
                     @input=${this._onValueChanged}
                   ></ha-textfield>
-                  <label class="hint">Bildgröße (OpenAI)</label>
-                  <select
-                    data-path="image.ai.size"
-                    @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                    .value=${ai.size || '1024x1024'}
-                  >
-                    <option value="1024x1024">1024x1024</option>
-                    <option value="1792x1024">1792x1024</option>
-                    <option value="1024x1792">1024x1792</option>
-                  </select>
+                  <div class="field">
+                    <label class="hint">Bildgröße (OpenAI)</label>
+                    <select
+                      data-path="image.ai.size"
+                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                      .value=${ai.size || '1024x1024'}
+                    >
+                      <option value="1024x1024">1024x1024</option>
+                      <option value="1792x1024">1792x1024</option>
+                      <option value="1024x1792">1024x1792</option>
+                    </select>
+                  </div>
                 </div>
                 <div class="row">
-                  <label class="hint">Aspect Ratio (Gemini)</label>
-                  <select
-                    data-path="image.ai.aspect_ratio"
-                    @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                    .value=${ai.aspect_ratio || '1:1'}
-                  >
-                    <option value="1:1">1:1</option>
-                    <option value="4:3">4:3</option>
-                    <option value="3:4">3:4</option>
-                    <option value="16:9">16:9</option>
-                    <option value="9:16">9:16</option>
-                  </select>
+                  <div class="field">
+                    <label class="hint">Aspect Ratio (Gemini)</label>
+                    <select
+                      data-path="image.ai.aspect_ratio"
+                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                      .value=${ai.aspect_ratio || '1:1'}
+                    >
+                      <option value="1:1">1:1</option>
+                      <option value="4:3">4:3</option>
+                      <option value="3:4">3:4</option>
+                      <option value="16:9">16:9</option>
+                      <option value="9:16">9:16</option>
+                    </select>
+                  </div>
                   <ha-textfield
                     label="Anzahl pro Prompt"
                     .value=${ai.count ?? ''}

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
 
 type HassState = {
   entity_id: string;
@@ -1268,8 +1268,9 @@ class BMWStatusCardEditor extends LitElement {
   }
 
   private _onImageModeChanged(ev: CustomEvent): void {
-    const target = ev.target as any;
+    const target = ev.currentTarget as any;
     const value = (ev.detail?.value ?? target?.value) as 'off' | 'static' | 'ai';
+    if (!value || !['off', 'static', 'ai'].includes(value)) return;
     if (!this._config) return;
     const config = { ...this._config };
     if (value === 'off') {
@@ -1284,7 +1285,7 @@ class BMWStatusCardEditor extends LitElement {
   }
 
   private _onSelectChanged(ev: CustomEvent): void {
-    const target = ev.target as any;
+    const target = ev.currentTarget as any;
     const path = target?.dataset?.path;
     if (!path) return;
     const value = ev.detail?.value ?? target?.value;
@@ -1389,11 +1390,16 @@ class BMWStatusCardEditor extends LitElement {
           ></ha-textfield>
         </div>
 
-        <ha-select label="Bildmodus" .value=${imageMode} @selected=${this._onImageModeChanged}>
-          <mwc-list-item value="off">off (keine Bilder)</mwc-list-item>
-          <mwc-list-item value="static">static (URLs)</mwc-list-item>
-          <mwc-list-item value="ai">ai (OpenAI/Gemini/Custom)</mwc-list-item>
-        </ha-select>
+        <ha-combo-box
+          label="Bildmodus"
+          .items=${['off (keine Bilder)', 'static (URLs)', 'ai (OpenAI/Gemini/Custom)']}
+          .value=${imageMode === 'off' ? 'off (keine Bilder)' : imageMode === 'static' ? 'static (URLs)' : 'ai (OpenAI/Gemini/Custom)'}
+          @value-changed=${(ev: CustomEvent) => {
+            const raw = ev.detail?.value as string;
+            const value = raw?.startsWith('static') ? 'static' : raw?.startsWith('ai') ? 'ai' : 'off';
+            this._onImageModeChanged({ ...ev, detail: { value } } as CustomEvent);
+          }}
+        ></ha-combo-box>
         <div class="hint">Pflicht: keine. Optional: Bilder über AI oder feste URLs.</div>
 
         ${imageMode === 'static'
@@ -1411,16 +1417,13 @@ class BMWStatusCardEditor extends LitElement {
         ${imageMode === 'ai'
           ? html`
               <div class="row">
-                <ha-select
+                <ha-combo-box
                   label="AI Provider"
+                  .items=${['openai', 'gemini', 'generic']}
                   .value=${ai.provider || 'openai'}
                   data-path="image.ai.provider"
-                  @selected=${this._onSelectChanged}
-                >
-                  <mwc-list-item value="openai">OpenAI</mwc-list-item>
-                  <mwc-list-item value="gemini">Gemini (Imagen)</mwc-list-item>
-                  <mwc-list-item value="generic">Generic Endpoint</mwc-list-item>
-                </ha-select>
+                  @value-changed=${this._onSelectChanged}
+                ></ha-combo-box>
                 <ha-textfield
                   label="AI API Key (erforderlich für OpenAI/Gemini)"
                   .value=${ai.api_key || ''}
@@ -1436,30 +1439,22 @@ class BMWStatusCardEditor extends LitElement {
                   data-path="image.ai.model"
                   @input=${this._onValueChanged}
                 ></ha-textfield>
-                <ha-select
+                <ha-combo-box
                   label="Bildgröße (OpenAI)"
+                  .items=${['1024x1024', '1792x1024', '1024x1792']}
                   .value=${ai.size || '1024x1024'}
                   data-path="image.ai.size"
-                  @selected=${this._onSelectChanged}
-                >
-                  <mwc-list-item value="1024x1024">1024x1024</mwc-list-item>
-                  <mwc-list-item value="1792x1024">1792x1024</mwc-list-item>
-                  <mwc-list-item value="1024x1792">1024x1792</mwc-list-item>
-                </ha-select>
+                  @value-changed=${this._onSelectChanged}
+                ></ha-combo-box>
               </div>
               <div class="row">
-                <ha-select
+                <ha-combo-box
                   label="Aspect Ratio (Gemini)"
+                  .items=${['1:1', '4:3', '3:4', '16:9', '9:16']}
                   .value=${ai.aspect_ratio || '1:1'}
                   data-path="image.ai.aspect_ratio"
-                  @selected=${this._onSelectChanged}
-                >
-                  <mwc-list-item value="1:1">1:1</mwc-list-item>
-                  <mwc-list-item value="4:3">4:3</mwc-list-item>
-                  <mwc-list-item value="3:4">3:4</mwc-list-item>
-                  <mwc-list-item value="16:9">16:9</mwc-list-item>
-                  <mwc-list-item value="9:16">9:16</mwc-list-item>
-                </ha-select>
+                  @value-changed=${this._onSelectChanged}
+                ></ha-combo-box>
                 <ha-textfield
                   label="Anzahl pro Prompt"
                   .value=${ai.count ?? ''}

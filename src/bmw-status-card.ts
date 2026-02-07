@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.4';
+const VERSION = '0.1.5';
 
 type HassState = {
   entity_id: string;
@@ -1167,7 +1167,7 @@ class BMWStatusCardEditor extends LitElement {
   }
 
   public setConfig(config: BMWStatusCardConfig): void {
-    this._config = { ...config };
+    this._config = { ...config, type: config.type || `custom:${CARD_NAME}` };
   }
 
   private async _loadIntegrationEntities(): Promise<void> {
@@ -1215,9 +1215,14 @@ class BMWStatusCardEditor extends LitElement {
   `;
 
   private _emitConfigChanged(): void {
+    if (!this._config) return;
+    const safeConfig: BMWStatusCardConfig = {
+      ...this._config,
+      type: this._config.type || `custom:${CARD_NAME}`
+    };
     this.dispatchEvent(
       new CustomEvent('config-changed', {
-        detail: { config: this._config },
+        detail: { config: safeConfig },
         bubbles: true,
         composed: true
       })

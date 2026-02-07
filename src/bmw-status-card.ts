@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.7';
+const VERSION = '0.1.8';
 
 type HassState = {
   entity_id: string;
@@ -1147,7 +1147,8 @@ class BMWStatusCardEditor extends LitElement {
     _bmwHomeEntity: { state: true },
     _bmwCardataEntity: { state: true },
     _bmwHomeEntities: { state: true },
-    _bmwCardataEntities: { state: true }
+    _bmwCardataEntities: { state: true },
+    _editorError: { state: true }
   };
 
   private _hass?: HomeAssistant;
@@ -1156,6 +1157,7 @@ class BMWStatusCardEditor extends LitElement {
   private _bmwCardataEntity?: string;
   private _bmwHomeEntities?: string[];
   private _bmwCardataEntities?: string[];
+  private _editorError?: string;
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
@@ -1212,7 +1214,17 @@ class BMWStatusCardEditor extends LitElement {
       font-size: 12px;
       margin-top: -6px;
     }
+    .error {
+      margin-top: 8px;
+      color: var(--error-color, #b00020);
+      white-space: pre-wrap;
+    }
   `;
+
+  private _setEditorError(err: unknown): void {
+    const message = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
+    this._editorError = message;
+  }
 
   private _emitConfigChanged(): void {
     if (!this._config) return;
@@ -1220,44 +1232,53 @@ class BMWStatusCardEditor extends LitElement {
       ...this._config,
       type: this._config.type || `custom:${CARD_NAME}`
     };
-    this.dispatchEvent(
-      new CustomEvent('config-changed', {
-        detail: { config: safeConfig },
-        bubbles: true,
-        composed: true
-      })
-    );
+    try {
+      this.dispatchEvent(
+        new CustomEvent('config-changed', {
+          detail: { config: safeConfig },
+          bubbles: true,
+          composed: true
+        })
+      );
+      this._editorError = undefined;
+    } catch (err) {
+      this._setEditorError(err);
+    }
   }
 
   private _setConfigValue(path: string, value: any): void {
     if (!this._config) return;
-    const keys = path.split('.');
-    const stack: any[] = [];
-    let obj: any = { ...this._config };
-    let cursor = obj;
-    for (let i = 0; i < keys.length - 1; i += 1) {
-      const key = keys[i];
-      stack.push({ parent: cursor, key });
-      cursor[key] = { ...(cursor[key] || {}) };
-      cursor = cursor[key];
-    }
-    const lastKey = keys[keys.length - 1];
-    if (value === '' || value === undefined || value === null) {
-      delete cursor[lastKey];
-    } else {
-      cursor[lastKey] = value;
-    }
-
-    // cleanup empty objects
-    for (let i = stack.length - 1; i >= 0; i -= 1) {
-      const { parent, key } = stack[i];
-      if (parent[key] && Object.keys(parent[key]).length === 0) {
-        delete parent[key];
+    try {
+      const keys = path.split('.');
+      const stack: any[] = [];
+      let obj: any = { ...this._config };
+      let cursor = obj;
+      for (let i = 0; i < keys.length - 1; i += 1) {
+        const key = keys[i];
+        stack.push({ parent: cursor, key });
+        cursor[key] = { ...(cursor[key] || {}) };
+        cursor = cursor[key];
       }
-    }
+      const lastKey = keys[keys.length - 1];
+      if (value === '' || value === undefined || value === null) {
+        delete cursor[lastKey];
+      } else {
+        cursor[lastKey] = value;
+      }
 
-    this._config = obj as BMWStatusCardConfig;
-    this._emitConfigChanged();
+      // cleanup empty objects
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        const { parent, key } = stack[i];
+        if (parent[key] && Object.keys(parent[key]).length === 0) {
+          delete parent[key];
+        }
+      }
+
+      this._config = obj as BMWStatusCardConfig;
+      this._emitConfigChanged();
+    } catch (err) {
+      this._setEditorError(err);
+    }
   }
 
   private _onValueChanged(ev: CustomEvent): void {
@@ -1337,6 +1358,7 @@ class BMWStatusCardEditor extends LitElement {
 
     return html`
       <div class="form">
+        ${this._editorError ? html`<div class="error">${this._editorError}</div>` : null}
         <ha-alert alert-type="info">Benötigt bmw_home und bmw-cardata-ha Geräte-IDs.</ha-alert>
 
         <div class="row">

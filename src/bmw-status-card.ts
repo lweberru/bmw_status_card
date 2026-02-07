@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.9';
+const VERSION = '0.1.10';
 
 type HassState = {
   entity_id: string;
@@ -196,9 +196,12 @@ class BMWStatusCard extends LitElement {
 
   private async _ensureConfig(): Promise<void> {
     if (!this.hass || !this._config || this._loading || this._vehicleConfig) return;
+    if (!this._config.bmw_home_device_id || !this._config.bmw_cardata_device_id) return;
 
     this._loading = true;
     try {
+      // eslint-disable-next-line no-console
+      console.debug('[bmw-status-card] building config');
       const deviceIds = [this._config.bmw_home_device_id, this._config.bmw_cardata_device_id].filter(Boolean);
       const entityEntries = await this._getEntityRegistry();
       const deviceEntries = await this._getDeviceRegistry();
@@ -213,6 +216,8 @@ class BMWStatusCard extends LitElement {
       this._error = undefined;
     } catch (err: any) {
       this._error = err?.message || String(err);
+      // eslint-disable-next-line no-console
+      console.error('[bmw-status-card] config build failed:', err);
     } finally {
       this._loading = false;
       this.requestUpdate();
@@ -347,6 +352,8 @@ class BMWStatusCard extends LitElement {
     }
 
     if (imageConfig.mode === 'ai' && imageConfig.ai) {
+      // eslint-disable-next-line no-console
+      console.debug('[bmw-status-card] generating AI images', imageConfig.ai);
       return this._generateAiImages(vehicleInfo, imageConfig.ai);
     }
 
@@ -1158,10 +1165,22 @@ class BMWStatusCardEditor extends LitElement {
   private _bmwHomeEntities?: string[];
   private _bmwCardataEntities?: string[];
   private _editorError?: string;
+  private static _errorHooked = false;
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
     this._loadIntegrationEntities();
+    if (!BMWStatusCardEditor._errorHooked) {
+      BMWStatusCardEditor._errorHooked = true;
+      window.addEventListener('error', (event) => {
+        // eslint-disable-next-line no-console
+        console.error('[bmw-status-card] Window error:', event.error || event.message || event);
+      });
+      window.addEventListener('unhandledrejection', (event) => {
+        // eslint-disable-next-line no-console
+        console.error('[bmw-status-card] Unhandled rejection:', event.reason);
+      });
+    }
   }
 
   public get hass(): HomeAssistant {
@@ -1236,6 +1255,8 @@ class BMWStatusCardEditor extends LitElement {
       type: this._config.type || `custom:${CARD_NAME}`
     };
     try {
+      // eslint-disable-next-line no-console
+      console.debug('[bmw-status-card] config-changed', safeConfig);
       this.dispatchEvent(
         new CustomEvent('config-changed', {
           detail: { config: safeConfig },
@@ -1295,6 +1316,8 @@ class BMWStatusCardEditor extends LitElement {
     const target = ev.currentTarget as any;
     const value = (ev.detail?.value ?? target?.value) as 'off' | 'static' | 'ai';
     if (!value || !['off', 'static', 'ai'].includes(value)) return;
+    // eslint-disable-next-line no-console
+    console.debug('[bmw-status-card] image mode changed:', value);
     if (!this._config) return;
     const config = { ...this._config };
     if (value === 'off') {
@@ -1416,11 +1439,12 @@ class BMWStatusCardEditor extends LitElement {
           </div>
           <div class="hint">Nur nötig, wenn vehicle-status-card nicht über HACS geladen wird.</div>
 
-          <ha-select label="Bildmodus" .value=${imageMode} @value-changed=${this._onImageModeChanged}>
-            <mwc-list-item value="off">off (keine Bilder)</mwc-list-item>
-            <mwc-list-item value="static">static (URLs)</mwc-list-item>
-            <mwc-list-item value="ai">ai (OpenAI/Gemini/Custom)</mwc-list-item>
-          </ha-select>
+          <label class="hint">Bildmodus</label>
+          <select @change=${(ev: Event) => this._onImageModeChanged(ev as any)} .value=${imageMode}>
+            <option value="off">off (keine Bilder)</option>
+            <option value="static">static (URLs)</option>
+            <option value="ai">ai (OpenAI/Gemini/Custom)</option>
+          </select>
           <div class="hint">Pflicht: keine. Optional: Bilder über AI oder feste URLs.</div>
 
           ${imageMode === 'static'
@@ -1438,16 +1462,16 @@ class BMWStatusCardEditor extends LitElement {
           ${imageMode === 'ai'
             ? html`
                 <div class="row">
-                  <ha-select
-                    label="AI Provider"
-                    .value=${ai.provider || 'openai'}
+                  <label class="hint">AI Provider</label>
+                  <select
                     data-path="image.ai.provider"
-                    @value-changed=${this._onSelectChanged}
+                    @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                    .value=${ai.provider || 'openai'}
                   >
-                    <mwc-list-item value="openai">OpenAI</mwc-list-item>
-                    <mwc-list-item value="gemini">Gemini (Imagen)</mwc-list-item>
-                    <mwc-list-item value="generic">Generic Endpoint</mwc-list-item>
-                  </ha-select>
+                    <option value="openai">OpenAI</option>
+                    <option value="gemini">Gemini (Imagen)</option>
+                    <option value="generic">Generic Endpoint</option>
+                  </select>
                   <ha-textfield
                     label="AI API Key (erforderlich für OpenAI/Gemini)"
                     .value=${ai.api_key || ''}
@@ -1463,30 +1487,30 @@ class BMWStatusCardEditor extends LitElement {
                     data-path="image.ai.model"
                     @input=${this._onValueChanged}
                   ></ha-textfield>
-                  <ha-select
-                    label="Bildgröße (OpenAI)"
-                    .value=${ai.size || '1024x1024'}
+                  <label class="hint">Bildgröße (OpenAI)</label>
+                  <select
                     data-path="image.ai.size"
-                    @value-changed=${this._onSelectChanged}
+                    @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                    .value=${ai.size || '1024x1024'}
                   >
-                    <mwc-list-item value="1024x1024">1024x1024</mwc-list-item>
-                    <mwc-list-item value="1792x1024">1792x1024</mwc-list-item>
-                    <mwc-list-item value="1024x1792">1024x1792</mwc-list-item>
-                  </ha-select>
+                    <option value="1024x1024">1024x1024</option>
+                    <option value="1792x1024">1792x1024</option>
+                    <option value="1024x1792">1024x1792</option>
+                  </select>
                 </div>
                 <div class="row">
-                  <ha-select
-                    label="Aspect Ratio (Gemini)"
-                    .value=${ai.aspect_ratio || '1:1'}
+                  <label class="hint">Aspect Ratio (Gemini)</label>
+                  <select
                     data-path="image.ai.aspect_ratio"
-                    @value-changed=${this._onSelectChanged}
+                    @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                    .value=${ai.aspect_ratio || '1:1'}
                   >
-                    <mwc-list-item value="1:1">1:1</mwc-list-item>
-                    <mwc-list-item value="4:3">4:3</mwc-list-item>
-                    <mwc-list-item value="3:4">3:4</mwc-list-item>
-                    <mwc-list-item value="16:9">16:9</mwc-list-item>
-                    <mwc-list-item value="9:16">9:16</mwc-list-item>
-                  </ha-select>
+                    <option value="1:1">1:1</option>
+                    <option value="4:3">4:3</option>
+                    <option value="3:4">3:4</option>
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                  </select>
                   <ha-textfield
                     label="Anzahl pro Prompt"
                     .value=${ai.count ?? ''}

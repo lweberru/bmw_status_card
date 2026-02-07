@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 
 type HassState = {
   entity_id: string;
@@ -136,12 +136,12 @@ class BMWStatusCard extends LitElement {
   }
 
   public setConfig(config: BMWStatusCardConfig): void {
-    if (!config?.bmw_home_device_id || !config?.bmw_cardata_device_id) {
-      throw new Error('bmw_home_device_id und bmw_cardata_device_id sind erforderlich.');
-    }
     this._config = config;
     this._vehicleConfig = undefined;
     this._error = undefined;
+    if (!config?.bmw_home_device_id || !config?.bmw_cardata_device_id) {
+      this._error = 'bmw_home_device_id und bmw_cardata_device_id sind erforderlich.';
+    }
     this._vehicleInfo = undefined;
     this._entityEntriesCache = undefined;
     this._deviceEntriesCache = undefined;
@@ -1145,16 +1145,21 @@ class BMWStatusCardEditor extends LitElement {
     hass: { attribute: false },
     _config: { state: true },
     _bmwHomeEntity: { state: true },
-    _bmwCardataEntity: { state: true }
+    _bmwCardataEntity: { state: true },
+    _bmwHomeEntities: { state: true },
+    _bmwCardataEntities: { state: true }
   };
 
   private _hass?: HomeAssistant;
   private _config?: BMWStatusCardConfig;
   private _bmwHomeEntity?: string;
   private _bmwCardataEntity?: string;
+  private _bmwHomeEntities?: string[];
+  private _bmwCardataEntities?: string[];
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
+    this._loadIntegrationEntities();
   }
 
   public get hass(): HomeAssistant {
@@ -1163,6 +1168,25 @@ class BMWStatusCardEditor extends LitElement {
 
   public setConfig(config: BMWStatusCardConfig): void {
     this._config = { ...config };
+  }
+
+  private async _loadIntegrationEntities(): Promise<void> {
+    if (!this.hass) return;
+    try {
+      const entries = (await this.hass.callWS({ type: 'config/entity_registry/list' })) as EntityRegistryEntry[];
+      const homeEntities = entries
+        .filter((entry) => entry.platform === 'bmw_home')
+        .map((entry) => entry.entity_id)
+        .sort();
+      const cardataEntities = entries
+        .filter((entry) => entry.platform === 'cardata')
+        .map((entry) => entry.entity_id)
+        .sort();
+      this._bmwHomeEntities = homeEntities;
+      this._bmwCardataEntities = cardataEntities;
+    } catch (_) {
+      // ignore lookup errors
+    }
   }
 
   static styles = css`
@@ -1328,17 +1352,19 @@ class BMWStatusCardEditor extends LitElement {
           <ha-entity-picker
             .hass=${this.hass}
             .value=${this._bmwHomeEntity || ''}
+            .includeEntities=${this._bmwHomeEntities || []}
             data-target="bmw_home_device_id"
             @value-changed=${this._onEntityPicked}
-            label="bmw_home Entity (optional)"
+            label="bmw_home Entity (optional, gefiltert)"
             allow-custom-entity
           ></ha-entity-picker>
           <ha-entity-picker
             .hass=${this.hass}
             .value=${this._bmwCardataEntity || ''}
+            .includeEntities=${this._bmwCardataEntities || []}
             data-target="bmw_cardata_device_id"
             @value-changed=${this._onEntityPicked}
-            label="bmw-cardata-ha Entity (optional)"
+            label="bmw-cardata-ha Entity (optional, gefiltert)"
             allow-custom-entity
           ></ha-entity-picker>
         </div>
@@ -1358,7 +1384,7 @@ class BMWStatusCardEditor extends LitElement {
           ></ha-textfield>
         </div>
 
-        <ha-select label="Bildmodus" .value=${imageMode} @selected=${this._onImageModeChanged} @value-changed=${this._onImageModeChanged}>
+        <ha-select label="Bildmodus" .value=${imageMode} @selected=${this._onImageModeChanged}>
           <mwc-list-item value="off">off (keine Bilder)</mwc-list-item>
           <mwc-list-item value="static">static (URLs)</mwc-list-item>
           <mwc-list-item value="ai">ai (OpenAI/Gemini/Custom)</mwc-list-item>
@@ -1385,7 +1411,6 @@ class BMWStatusCardEditor extends LitElement {
                   .value=${ai.provider || 'openai'}
                   data-path="image.ai.provider"
                   @selected=${this._onSelectChanged}
-                  @value-changed=${this._onSelectChanged}
                 >
                   <mwc-list-item value="openai">OpenAI</mwc-list-item>
                   <mwc-list-item value="gemini">Gemini (Imagen)</mwc-list-item>
@@ -1411,7 +1436,6 @@ class BMWStatusCardEditor extends LitElement {
                   .value=${ai.size || '1024x1024'}
                   data-path="image.ai.size"
                   @selected=${this._onSelectChanged}
-                  @value-changed=${this._onSelectChanged}
                 >
                   <mwc-list-item value="1024x1024">1024x1024</mwc-list-item>
                   <mwc-list-item value="1792x1024">1792x1024</mwc-list-item>
@@ -1424,7 +1448,6 @@ class BMWStatusCardEditor extends LitElement {
                   .value=${ai.aspect_ratio || '1:1'}
                   data-path="image.ai.aspect_ratio"
                   @selected=${this._onSelectChanged}
-                  @value-changed=${this._onSelectChanged}
                 >
                   <mwc-list-item value="1:1">1:1</mwc-list-item>
                   <mwc-list-item value="4:3">4:3</mwc-list-item>

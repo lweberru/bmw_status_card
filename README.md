@@ -8,6 +8,8 @@ Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata
 
 - **bmw_home** und **bmw-cardata-ha** sind installiert und liefern Entities.
 - **vehicle-status-card** ist installiert (HACS) oder wird per Resource geladen.
+- Für persistente KI-Bilder via OpenAI/Gemini: **downloader**-Integration aktivieren.
+- Für serverseitige KI-Bilder: **ai_task**-Integration (Home Assistant AI Tasks).
 
 ## Installation (HACS – Custom Repository)
 
@@ -28,10 +30,8 @@ maptiler_api_key: !secret maptiler_key
 image:
   mode: ai
   ai:
-    provider: openai
-    api_key: !secret openai_api_key
-    model: gpt-image-1
-    size: 1024x1024
+    provider: ha_ai_task
+    ha_entity_id: ai_task.google_ai_task
     count: 2
     max_images: 8
     views:
@@ -56,6 +56,8 @@ image:
     aspect_ratio: "1:1"
     count: 1
     max_images: 6
+    download: true
+    download_path: "www/bmw_status_card"
     views:
       - "front 3/4 view"
       - "rear 3/4 view"
@@ -103,6 +105,8 @@ Du kannst per `vehicle_status_card` die generierte Konfiguration jederzeit über
 - Die Karte speichert generierte Bilder im Browser-Cache (Standard: 24h).
 - Für Provider `openai` wird `image.ai.api_key` benötigt.
 - Für Provider `gemini` wird `image.ai.api_key` benötigt (Imagen API).
+- Für Provider `ha_ai_task` wird `image.ai.ha_entity_id` empfohlen.
+- `download` speichert OpenAI/Gemini-URLs über die **downloader**-Integration in `/config/www` (Zugriff via `/local/`).
 - Für `generic` kannst du einen eigenen Endpoint definieren.
 - Mit `views` kannst du mehrere Blickwinkel erzeugen (z. B. Front/Seite/Heck). Nutze dazu `{angle}` im Prompt.
 

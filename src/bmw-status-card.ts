@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.17';
+const VERSION = '0.1.18';
 
 type HassState = {
   entity_id: string;
@@ -53,6 +53,10 @@ type ImageAiConfig = {
   count?: number;
   max_images?: number;
   ha_entity_id?: string;
+  download?: boolean;
+  download_path?: string;
+  upload?: boolean;
+  upload_path?: string;
   prompt_template?: string;
   prompts?: string[];
   views?: string[];
@@ -377,6 +381,8 @@ class BMWStatusCard extends LitElement {
     const countPerPrompt = ai.count ?? 1;
     const maxImages = ai.max_images ?? 8;
     const onDemand = ai.generate_on_demand !== false;
+    const downloadEnabled = ai.download ?? (provider === 'openai' || provider === 'gemini');
+    const uploadEnabled = ai.upload ?? false;
 
     try {
       const cachedRaw = localStorage.getItem(cacheKey);
@@ -420,6 +426,12 @@ class BMWStatusCard extends LitElement {
       } catch (_) {
         // ignore cache errors
       }
+    }
+
+    if (images.length && uploadEnabled) {
+      images = await this._uploadImagesIfNeeded(images, ai);
+    } else if (images.length && downloadEnabled) {
+      images = await this._downloadImagesIfNeeded(images, ai);
     }
 
     return images;
@@ -647,6 +659,127 @@ class BMWStatusCard extends LitElement {
     return urls.filter(Boolean) as string[];
   }
 
+  private async _downloadImagesIfNeeded(images: string[], ai: ImageAiConfig): Promise<string[]> {
+    if (!this.hass) return images;
+
+    const downloadPath = this._normalizeDownloadPath(ai.download_path);
+    const results: string[] = [];
+
+    for (const image of images) {
+      if (!this._isHttpUrl(image)) {
+        results.push(image);
+        continue;
+      }
+
+      const extension = this._guessImageExtension(image);
+      const filename = `${downloadPath}/${this._hash(image)}.${extension}`;
+
+      try {
+        await this.hass.callWS({
+          type: 'call_service',
+          domain: 'downloader',
+          service: 'download',
+          service_data: {
+            url: image,
+            filename
+          }
+        });
+
+        const localPath = filename.startsWith('www/') ? filename.slice(4) : filename;
+        results.push(`/local/${localPath}`);
+      } catch (_) {
+        results.push(image);
+      }
+    }
+
+    return results;
+  }
+
+  private async _uploadImagesIfNeeded(images: string[], ai: ImageAiConfig): Promise<string[]> {
+    if (!this.hass) return images;
+
+    const uploadPath = this._normalizeUploadPath(ai.upload_path);
+    const results: string[] = [];
+
+    for (const image of images) {
+      let url: string | undefined;
+      let dataBase64: string | undefined;
+      let mimeType: string | undefined;
+
+      if (this._isHttpUrl(image)) {
+        url = image;
+      } else {
+        const parsed = this._parseDataUrl(image);
+        if (parsed) {
+          dataBase64 = parsed.data;
+          mimeType = parsed.mimeType;
+        } else {
+          results.push(image);
+          continue;
+        }
+      }
+
+      const extension = this._guessImageExtension(url, mimeType);
+      const hashInput = url || dataBase64 || image;
+      const filename = `${this._hash(hashInput)}.${extension}`;
+
+      try {
+        const response = await this.hass.callWS({
+          type: 'call_service',
+          domain: 'upload_file',
+          service: 'upload_file',
+          service_data: {
+            path: uploadPath,
+            filename,
+            ...(url ? { url } : { data_base64: dataBase64 })
+          },
+          return_response: true
+        });
+        const payload = response?.response ?? response?.result ?? response;
+        const localUrl = payload?.local_url || payload?.url || payload?.local_path;
+        results.push(localUrl || image);
+      } catch (_) {
+        results.push(image);
+      }
+    }
+
+    return results;
+  }
+
+  private _normalizeUploadPath(rawPath?: string): string {
+    const normalized = (rawPath || 'www/upload_file').replace(/^\/+/, '').replace(/\/+$/, '');
+    return normalized.startsWith('www/') ? normalized : `www/${normalized}`;
+  }
+
+  private _parseDataUrl(value: string): { data: string; mimeType?: string } | null {
+    if (!value.startsWith('data:')) return null;
+    const match = value.match(/^data:([^;]+);base64,(.*)$/);
+    if (!match) return null;
+    return { mimeType: match[1], data: match[2] };
+  }
+
+  private _guessImageExtension(url?: string, mimeType?: string): string {
+    if (mimeType) {
+      if (mimeType.includes('png')) return 'png';
+      if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return 'jpg';
+      if (mimeType.includes('webp')) return 'webp';
+    }
+    if (url) {
+      const match = url.match(/\.(png|jpg|jpeg|webp)(\?|$)/i);
+      if (match) return match[1].toLowerCase().replace('jpeg', 'jpg');
+    }
+    return 'png';
+  }
+
+  private _normalizeDownloadPath(rawPath?: string): string {
+    const normalized = (rawPath || 'www/bmw_status_card').replace(/^\/+/, '').replace(/\/+$/, '');
+    return normalized.startsWith('www/') ? normalized : `www/${normalized}`;
+  }
+
+  private _isHttpUrl(value: string): boolean {
+    return value.startsWith('http://') || value.startsWith('https://');
+  }
+
   private async _extractHaAiTaskUrls(payload: any): Promise<string[]> {
     if (!payload) return [];
     const candidates = payload?.images || payload?.data || payload?.results || payload?.result || payload;
@@ -739,6 +872,10 @@ class BMWStatusCard extends LitElement {
       aspect_ratio: ai.aspect_ratio,
       count: ai.count,
       max_images: ai.max_images,
+      download: ai.download,
+      download_path: ai.download_path,
+      upload: ai.upload,
+      upload_path: ai.upload_path,
       prompt_template: ai.prompt_template,
       prompts: ai.prompts,
       views: ai.views,
@@ -1580,6 +1717,13 @@ class BMWStatusCardEditor extends LitElement {
     this._setConfigValue(path, value);
   }
 
+  private _onToggleChanged(ev: Event): void {
+    const target = ev.currentTarget as any;
+    const path = target?.dataset?.path;
+    if (!path) return;
+    this._setConfigValue(path, Boolean(target?.checked));
+  }
+
   private _maybeLoadGeminiModels(changedPath?: string, changedValue?: any): void {
     const provider = this._config?.image?.ai?.provider || 'openai';
     if (provider !== 'gemini') return;
@@ -1730,6 +1874,8 @@ class BMWStatusCardEditor extends LitElement {
     const ai = this._config.image?.ai || {};
     const aiProvider = ai.provider || 'ha_ai_task';
     const onDemand = ai.generate_on_demand !== false;
+    const downloadEnabled = ai.download ?? (aiProvider === 'openai' || aiProvider === 'gemini');
+    const uploadEnabled = ai.upload ?? false;
     try {
       return html`
         <div class="form">
@@ -1859,6 +2005,60 @@ class BMWStatusCardEditor extends LitElement {
                         label="ai_task Entity (optional)"
                         allow-custom-entity
                       ></ha-entity-picker>
+                    `
+                  : null}
+                ${aiProvider === 'openai' || aiProvider === 'gemini'
+                  ? html`
+                      <div class="row">
+                        <div class="field">
+                          <label class="hint">Bilder via upload_file speichern</label>
+                          <ha-switch
+                            .checked=${uploadEnabled}
+                            data-path="image.ai.upload"
+                            @change=${this._onToggleChanged}
+                          ></ha-switch>
+                        </div>
+                        ${uploadEnabled
+                          ? html`
+                              <ha-textfield
+                                label="Upload Pfad (relativ zu /config)"
+                                .value=${ai.upload_path || 'www/upload_file'}
+                                data-path="image.ai.upload_path"
+                                @input=${this._onValueChanged}
+                              ></ha-textfield>
+                            `
+                          : null}
+                      </div>
+                      <div class="hint">
+                        Benötigt die Integration <strong>upload_file</strong>.
+                      </div>
+                    `
+                  : null}
+                ${aiProvider === 'openai' || aiProvider === 'gemini'
+                  ? html`
+                      <div class="row">
+                        <div class="field">
+                          <label class="hint">Bilder auf HA speichern (downloader)</label>
+                          <ha-switch
+                            .checked=${downloadEnabled}
+                            data-path="image.ai.download"
+                            @change=${this._onToggleChanged}
+                          ></ha-switch>
+                        </div>
+                        ${downloadEnabled
+                          ? html`
+                              <ha-textfield
+                                label="Downloader Pfad (relativ zu /config)"
+                                .value=${ai.download_path || 'www/bmw_status_card'}
+                                data-path="image.ai.download_path"
+                                @input=${this._onValueChanged}
+                              ></ha-textfield>
+                            `
+                          : null}
+                      </div>
+                      <div class="hint">
+                        Benötigt die Integration <strong>downloader</strong>. Gespeichert unter /config/www → /local/.
+                      </div>
                     `
                   : null}
                 ${aiProvider !== 'generic'

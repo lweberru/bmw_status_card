@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.15';
+const VERSION = '0.1.16';
 
 type HassState = {
   entity_id: string;
@@ -44,7 +44,7 @@ type VehicleInfo = {
 };
 
 type ImageAiConfig = {
-  provider?: 'openai' | 'gemini' | 'generic';
+  provider?: 'openai' | 'gemini' | 'generic' | 'ha_ai_task';
   endpoint?: string;
   api_key?: string;
   model?: string;
@@ -52,10 +52,13 @@ type ImageAiConfig = {
   aspect_ratio?: string;
   count?: number;
   max_images?: number;
+  ha_entity_id?: string;
   prompt_template?: string;
   prompts?: string[];
   views?: string[];
   cache_hours?: number;
+  generate_on_demand?: boolean;
+  generate_request_id?: string;
   request_body?: Record<string, any>;
   response_path?: string;
 };
@@ -352,7 +355,7 @@ class BMWStatusCard extends LitElement {
     }
 
     if (imageConfig.mode === 'ai' && imageConfig.ai) {
-      const provider = imageConfig.ai.provider || 'openai';
+      const provider = imageConfig.ai.provider || 'ha_ai_task';
       if ((provider === 'openai' || provider === 'gemini') && !imageConfig.ai.api_key) {
         // eslint-disable-next-line no-console
         console.warn('[bmw-status-card] image.ai.api_key fehlt – überspringe Bildgenerierung.');
@@ -367,12 +370,13 @@ class BMWStatusCard extends LitElement {
   }
 
   private async _generateAiImages(vehicleInfo: VehicleInfo, ai: ImageAiConfig): Promise<string[]> {
-    const provider = ai.provider || 'openai';
+    const provider = ai.provider || 'ha_ai_task';
     const cacheHours = ai.cache_hours ?? 24;
     const cacheKey = this._buildImageCacheKey(vehicleInfo, ai);
     const prompts = this._buildPrompts(vehicleInfo, ai);
     const countPerPrompt = ai.count ?? 1;
     const maxImages = ai.max_images ?? 8;
+    const onDemand = ai.generate_on_demand !== false;
 
     try {
       const cachedRaw = localStorage.getItem(cacheKey);
@@ -387,6 +391,10 @@ class BMWStatusCard extends LitElement {
       // ignore cache errors
     }
 
+    if (onDemand && !ai.generate_request_id) {
+      return [];
+    }
+
     let images: string[] = [];
 
     for (const prompt of prompts) {
@@ -399,6 +407,8 @@ class BMWStatusCard extends LitElement {
         images.push(...(await this._fetchOpenAiImages(prompt, ai, batchCount)));
       } else if (provider === 'gemini') {
         images.push(...(await this._fetchGeminiImages(prompt, ai, batchCount)));
+      } else if (provider === 'ha_ai_task') {
+        images.push(...(await this._fetchHaAiTaskImages(prompt, ai, batchCount)));
       } else {
         images.push(...(await this._fetchGenericImages(prompt, ai, batchCount)));
       }
@@ -581,6 +591,91 @@ class BMWStatusCard extends LitElement {
       .filter(Boolean) as string[];
   }
 
+  private async _fetchHaAiTaskImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
+    if (!this.hass) throw new Error('Home Assistant nicht verfügbar.');
+
+    const serviceData: Record<string, any> = {
+      prompt,
+      n: count
+    };
+
+    if (ai.ha_entity_id) serviceData.entity_id = ai.ha_entity_id;
+    if (ai.model) serviceData.model = ai.model;
+    if (ai.size) serviceData.size = ai.size;
+    if (ai.aspect_ratio) serviceData.aspect_ratio = ai.aspect_ratio;
+    if (ai.request_body) {
+      Object.assign(serviceData, ai.request_body);
+    }
+
+    let response: any;
+    try {
+      response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'ai_task',
+        service: 'generate_image',
+        service_data: serviceData,
+        return_response: true
+      });
+    } catch (err: any) {
+      throw new Error(`ai_task Fehler: ${err?.message || String(err)}`);
+    }
+
+    const payload = response?.response ?? response?.result ?? response;
+    const urls = await this._extractHaAiTaskUrls(payload);
+    return urls.filter(Boolean) as string[];
+  }
+
+  private async _extractHaAiTaskUrls(payload: any): Promise<string[]> {
+    if (!payload) return [];
+    const candidates = payload?.images || payload?.data || payload?.results || payload?.result || payload;
+    const items = Array.isArray(candidates) ? candidates : [candidates];
+    const urls: string[] = [];
+
+    for (const item of items) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        urls.push(item);
+        continue;
+      }
+      const url =
+        item.url ||
+        item.image_url ||
+        item.media_url ||
+        item.content_url ||
+        item.media?.url ||
+        item.image?.url;
+      if (url) {
+        urls.push(url);
+        continue;
+      }
+      const mediaId = item.media_id || item.media_content_id || item.content_id || item.media;
+      if (mediaId) {
+        const resolved = await this._resolveMediaSourceUrl(String(mediaId));
+        if (resolved) {
+          urls.push(resolved);
+        } else {
+          urls.push(`/api/media/${mediaId}`);
+        }
+      }
+    }
+
+    return urls;
+  }
+
+  private async _resolveMediaSourceUrl(mediaId: string): Promise<string | undefined> {
+    if (!this.hass || !mediaId) return undefined;
+    try {
+      if (mediaId.startsWith('http')) return mediaId;
+      const resolved = await this.hass.callWS({
+        type: 'media_source/resolve',
+        media_content_id: mediaId
+      });
+      return resolved?.url;
+    } catch (_) {
+      return undefined;
+    }
+  }
+
   private async _fetchGenericImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
     if (!ai.endpoint) throw new Error('image.ai.endpoint fehlt (generic).');
     const body = ai.request_body || { prompt, count, size: ai.size };
@@ -624,7 +719,8 @@ class BMWStatusCard extends LitElement {
       max_images: ai.max_images,
       prompt_template: ai.prompt_template,
       prompts: ai.prompts,
-      views: ai.views
+      views: ai.views,
+      generate_request_id: ai.generate_on_demand !== false ? ai.generate_request_id : undefined
     };
     return `bmw-status-card:images:${this._hash(JSON.stringify(payload))}`;
   }
@@ -1221,10 +1317,14 @@ class BMWStatusCardEditor extends LitElement {
     _bmwCardataEntity: { state: true },
     _bmwHomeEntities: { state: true },
     _bmwCardataEntities: { state: true },
+    _aiTaskEntities: { state: true },
     _editorError: { state: true },
     _geminiModels: { state: true },
     _geminiModelsLoading: { state: true },
-    _geminiModelsError: { state: true }
+    _geminiModelsError: { state: true },
+    _openAiModels: { state: true },
+    _openAiModelsLoading: { state: true },
+    _openAiModelsError: { state: true }
   };
 
   private _hass?: HomeAssistant;
@@ -1233,12 +1333,18 @@ class BMWStatusCardEditor extends LitElement {
   private _bmwCardataEntity?: string;
   private _bmwHomeEntities?: string[];
   private _bmwCardataEntities?: string[];
+  private _aiTaskEntities?: string[];
   private _editorError?: string;
   private _geminiModels?: string[];
   private _geminiModelsLoading = false;
   private _geminiModelsError?: string;
   private _geminiModelsKey?: string;
   private _geminiModelsTimer?: number;
+  private _openAiModels?: string[];
+  private _openAiModelsLoading = false;
+  private _openAiModelsError?: string;
+  private _openAiModelsKey?: string;
+  private _openAiModelsTimer?: number;
   private static _errorHooked = false;
 
   public set hass(hass: HomeAssistant) {
@@ -1264,6 +1370,7 @@ class BMWStatusCardEditor extends LitElement {
   public setConfig(config: BMWStatusCardConfig): void {
     this._config = { ...config, type: config.type || `custom:${CARD_NAME}` };
     this._maybeLoadGeminiModels();
+    this._maybeLoadOpenAiModels();
   }
 
   private async _loadIntegrationEntities(): Promise<void> {
@@ -1278,8 +1385,12 @@ class BMWStatusCardEditor extends LitElement {
         .filter((entry) => entry.platform === 'cardata')
         .map((entry) => entry.entity_id)
         .sort();
+      const aiTaskEntities = Object.keys(this.hass.states || {})
+        .filter((entityId) => entityId.startsWith('ai_task.'))
+        .sort();
       this._bmwHomeEntities = homeEntities;
       this._bmwCardataEntities = cardataEntities;
+      this._aiTaskEntities = aiTaskEntities;
     } catch (_) {
       // ignore lookup errors
     }
@@ -1304,6 +1415,12 @@ class BMWStatusCardEditor extends LitElement {
     }
     .field label {
       margin: 0;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
     }
     ha-alert {
       margin-bottom: 8px;
@@ -1398,6 +1515,7 @@ class BMWStatusCardEditor extends LitElement {
       this._config = obj as BMWStatusCardConfig;
       this._emitConfigChanged();
       this._maybeLoadGeminiModels(path, value);
+      this._maybeLoadOpenAiModels(path, value);
     } catch (err) {
       this._setEditorError(err);
     }
@@ -1455,6 +1573,60 @@ class BMWStatusCardEditor extends LitElement {
     this._geminiModelsTimer = window.setTimeout(() => {
       this._loadGeminiModels(apiKey);
     }, 400);
+  }
+
+  private _maybeLoadOpenAiModels(changedPath?: string, changedValue?: any): void {
+    const provider = this._config?.image?.ai?.provider || 'openai';
+    if (provider !== 'openai') return;
+    const apiKey =
+      changedPath === 'image.ai.api_key'
+        ? String(changedValue || '')
+        : String(this._config?.image?.ai?.api_key || '');
+
+    if (!apiKey || apiKey.length < 20) return;
+    if (this._openAiModelsLoading) return;
+    if (this._openAiModelsKey === apiKey && this._openAiModels?.length) return;
+
+    if (this._openAiModelsTimer) {
+      window.clearTimeout(this._openAiModelsTimer);
+    }
+    this._openAiModelsTimer = window.setTimeout(() => {
+      this._loadOpenAiModels(apiKey);
+    }, 400);
+  }
+
+  private async _loadOpenAiModels(apiKey: string): Promise<void> {
+    this._openAiModelsLoading = true;
+    this._openAiModelsError = undefined;
+    this._openAiModelsKey = apiKey;
+    try {
+      const response = await fetch('https://api.openai.com/v1/models', {
+        headers: {
+          Authorization: `Bearer ${apiKey}`
+        }
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`OpenAI ListModels Fehler: ${response.status} ${text}`);
+      }
+      const data = await response.json();
+      const models = (data?.data || []) as Array<{ id?: string }>;
+      const supported = models
+        .map((model) => model.id || '')
+        .filter(Boolean)
+        .filter((id) => /(image|dall-e|gpt-image)/i.test(id))
+        .sort();
+
+      this._openAiModels = supported;
+    } catch (err: any) {
+      this._openAiModelsError = err?.message || String(err);
+      this._openAiModels = undefined;
+      // eslint-disable-next-line no-console
+      console.warn('[bmw-status-card] OpenAI ListModels fehlgeschlagen:', err);
+    } finally {
+      this._openAiModelsLoading = false;
+      this.requestUpdate();
+    }
   }
 
   private async _loadGeminiModels(apiKey: string): Promise<void> {
@@ -1531,7 +1703,8 @@ class BMWStatusCardEditor extends LitElement {
 
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
-    const aiProvider = ai.provider || 'openai';
+    const aiProvider = ai.provider || 'ha_ai_task';
+    const onDemand = ai.generate_on_demand !== false;
     try {
       return html`
         <div class="form">
@@ -1624,6 +1797,7 @@ class BMWStatusCardEditor extends LitElement {
                     >
                       <option value="openai">OpenAI</option>
                       <option value="gemini">Gemini (Imagen)</option>
+                      <option value="ha_ai_task">Home Assistant (ai_task)</option>
                       <option value="generic">Generic Endpoint</option>
                     </select>
                   </div>
@@ -1632,8 +1806,33 @@ class BMWStatusCardEditor extends LitElement {
                     .value=${ai.api_key || ''}
                     data-path="image.ai.api_key"
                     @input=${this._onValueChanged}
+                    ?disabled=${aiProvider === 'ha_ai_task'}
                   ></ha-textfield>
                 </div>
+                <div class="actions">
+                  <mwc-button
+                    raised
+                    @click=${() =>
+                      this._setConfigValue('image.ai.generate_request_id', String(Date.now()))}
+                  >Generate Images</mwc-button>
+                  ${onDemand
+                    ? html`<div class="hint">Bilder werden nur nach Klick generiert (Cache aktiv).</div>`
+                    : html`<div class="hint">Auto-Generierung aktiv.</div>`}
+                </div>
+                ${aiProvider === 'ha_ai_task'
+                  ? html`
+                      <div class="hint">Nutze Home Assistant ai_task.generate_image und erhalte Media-URLs.</div>
+                      <ha-entity-picker
+                        .hass=${this.hass}
+                        .value=${ai.ha_entity_id || ''}
+                        .includeEntities=${this._aiTaskEntities || []}
+                        data-path="image.ai.ha_entity_id"
+                        @value-changed=${(ev: CustomEvent) => this._onSelectChanged(ev as any)}
+                        label="ai_task Entity (optional)"
+                        allow-custom-entity
+                      ></ha-entity-picker>
+                    `
+                  : null}
                 <div class="row">
                   ${aiProvider === 'gemini' && this._geminiModels?.length
                     ? html`
@@ -1651,7 +1850,23 @@ class BMWStatusCardEditor extends LitElement {
                           </select>
                         </div>
                       `
-                    : html`
+                    : aiProvider === 'openai' && this._openAiModels?.length
+                      ? html`
+                          <div class="field">
+                            <label class="hint">OpenAI Model (gefiltert)</label>
+                            <select
+                              data-path="image.ai.model"
+                              @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                              .value=${ai.model || ''}
+                            >
+                              <option value="">Auto (Standard)</option>
+                              ${this._openAiModels.map(
+                                (model) => html`<option value=${model}>${model}</option>`
+                              )}
+                            </select>
+                          </div>
+                        `
+                      : html`
                         <ha-textfield
                           label="AI Model (optional)"
                           .value=${ai.model || ''}
@@ -1678,6 +1893,12 @@ class BMWStatusCardEditor extends LitElement {
                   : null}
                 ${aiProvider === 'gemini' && this._geminiModelsError
                   ? html`<div class="hint">${this._geminiModelsError}</div>`
+                  : null}
+                ${aiProvider === 'openai' && this._openAiModelsLoading
+                  ? html`<div class="hint">Lade OpenAI-Modelle…</div>`
+                  : null}
+                ${aiProvider === 'openai' && this._openAiModelsError
+                  ? html`<div class="hint">${this._openAiModelsError}</div>`
                   : null}
                 <div class="row">
                   <div class="field">

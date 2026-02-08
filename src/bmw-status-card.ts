@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.19';
+const VERSION = '0.1.20';
 
 type HassState = {
   entity_id: string;
@@ -601,52 +601,23 @@ class BMWStatusCard extends LitElement {
   private async _fetchHaAiTaskImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
     if (!this.hass) throw new Error('Home Assistant nicht verfügbar.');
 
-    const baseData: Record<string, any> = {};
-    if (ai.ha_entity_id) baseData.entity_id = ai.ha_entity_id;
-    if (ai.model) baseData.model = ai.model;
-    if (ai.size) baseData.size = ai.size;
-    if (ai.aspect_ratio) baseData.aspect_ratio = ai.aspect_ratio;
-    if (ai.request_body) {
-      Object.assign(baseData, ai.request_body);
-    }
-
-    const taskName = this._vehicleInfo?.name || this._config?.vehicle_info?.name || 'BMW Status Card';
-
-    const attempts: Array<Record<string, any>> = [
-      { task_name: taskName, instructions: prompt },
-      { task_name: taskName, instructions: prompt, n: count },
-      { prompt, n: count },
-      { prompt },
-      { text: prompt, n: count },
-      { text: prompt },
-      { input: prompt, n: count },
-      { input: prompt },
-      { task: prompt, n: count },
-      { task: prompt },
-      { description: prompt, n: count },
-      { description: prompt }
-    ];
+    const serviceData: Record<string, any> = {
+      task_name: this._vehicleInfo?.name || this._config?.vehicle_info?.name || 'BMW Status Card',
+      instructions: prompt
+    };
+    if (ai.ha_entity_id) serviceData.entity_id = ai.ha_entity_id;
 
     let response: any;
-    let lastError: any;
-    for (const attempt of attempts) {
-      try {
-        response = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'ai_task',
-          service: 'generate_image',
-          service_data: { ...baseData, ...attempt },
-          return_response: true
-        });
-        lastError = undefined;
-        break;
-      } catch (err: any) {
-        lastError = err;
-      }
-    }
-
-    if (!response) {
-      throw new Error(`ai_task Fehler: ${lastError?.message || String(lastError)}`);
+    try {
+      response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'ai_task',
+        service: 'generate_image',
+        service_data: serviceData,
+        return_response: true
+      });
+    } catch (err: any) {
+      throw new Error(`ai_task Fehler: ${err?.message || String(err)}`);
     }
 
     const payload = response?.response ?? response?.result ?? response;

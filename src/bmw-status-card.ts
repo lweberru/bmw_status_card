@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.25';
+const VERSION = '0.1.26';
 
 type HassState = {
   entity_id: string;
@@ -132,8 +132,9 @@ class BMWStatusCard extends LitElement {
     }
     .status-overlay {
       position: absolute;
-      top: 10px;
-      right: 10px;
+      top: 55%;
+      right: 12px;
+      transform: translateY(-50%);
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -1268,20 +1269,6 @@ class BMWStatusCard extends LitElement {
     }
     if (rowInfoItems.length) {
       indicator_rows.push({ row_items: rowInfoItems, alignment: 'center', no_wrap: true });
-    }
-    if (tireActualEntities.length) {
-      indicator_rows.push({
-        row_items: tireActualEntities.map((entity) => ({ type: 'entity', entity })),
-        alignment: 'center',
-        no_wrap: true
-      });
-    }
-    if (doorSummaryEntities.length) {
-      indicator_rows.push({
-        row_items: doorSummaryEntities.map((entity) => ({ type: 'entity', entity })),
-        alignment: 'center',
-        no_wrap: true
-      });
     }
     if (tireActualEntities.length) {
       indicator_rows.push({

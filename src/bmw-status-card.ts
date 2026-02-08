@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.20';
+const VERSION = '0.1.21';
 
 type HassState = {
   entity_id: string;
@@ -379,7 +379,7 @@ class BMWStatusCard extends LitElement {
     const countPerPrompt = ai.count ?? 1;
     const maxImages = ai.max_images ?? 8;
     const onDemand = ai.generate_on_demand !== false;
-    const uploadEnabled = ai.upload ?? (provider === 'openai' || provider === 'gemini');
+    const uploadEnabled = ai.upload ?? (provider === 'openai' || provider === 'gemini' || provider === 'ha_ai_task');
 
     try {
       const cachedRaw = localStorage.getItem(cacheKey);
@@ -643,6 +643,16 @@ class BMWStatusCard extends LitElement {
         if (parsed) {
           dataBase64 = parsed.data;
           mimeType = parsed.mimeType;
+        } else if (image.startsWith('/')) {
+          const dataUrl = await this._fetchAsDataUrl(image);
+          const fetched = dataUrl ? this._parseDataUrl(dataUrl) : null;
+          if (fetched) {
+            dataBase64 = fetched.data;
+            mimeType = fetched.mimeType;
+          } else {
+            results.push(image);
+            continue;
+          }
         } else {
           results.push(image);
           continue;
@@ -686,6 +696,22 @@ class BMWStatusCard extends LitElement {
     const match = value.match(/^data:([^;]+);base64,(.*)$/);
     if (!match) return null;
     return { mimeType: match[1], data: match[2] };
+  }
+
+  private async _fetchAsDataUrl(url: string): Promise<string | null> {
+    try {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    } catch (_) {
+      return null;
+    }
   }
 
   private _guessImageExtension(url?: string, mimeType?: string): string {
@@ -819,7 +845,14 @@ class BMWStatusCard extends LitElement {
   private _buildVehicleStatusCardConfig(entities: EntityInfo[], images: string[]): Record<string, any> {
     const used = new Set<string>();
 
-    const lock = this._pickEntity(entities, used, ['lock', 'binary_sensor', 'sensor'], ['lock', 'locked', 'door lock']);
+    const lock = this._pickEntity(entities, used, ['lock', 'binary_sensor', 'sensor'], [
+      'lock',
+      'locked',
+      'door lock',
+      'verriegelt',
+      'schloss',
+      'türschloss'
+    ]);
     const charging = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
       'charging',
       'charge',
@@ -827,56 +860,155 @@ class BMWStatusCard extends LitElement {
       'plug',
       'charging port',
       'connector',
-      'port'
+      'port',
+      'laden',
+      'lade',
+      'stecker',
+      'anschluss',
+      'ladeklappe'
     ]);
     const battery = this._pickEntity(entities, used, ['sensor'], [
       'battery',
+      'batterie',
       'soc',
       'state_of_charge',
       'state of charge',
       'state_of_energy',
-      'soe'
+      'soe',
+      'ladezustand',
+      'batteriestand',
+      'soc bei ankunft',
+      'state_of_charge_predicted',
+      'state_of_charge_predicted_on_integration_side'
     ]);
-    const fuel = this._pickEntity(entities, used, ['sensor'], ['fuel', 'tank', 'fuel_level']);
-    const range = this._pickEntity(entities, used, ['sensor'], ['range', 'remaining', 'remaining_range', 'remainingrange']);
+    const fuel = this._pickEntity(entities, used, ['sensor'], [
+      'fuel',
+      'tank',
+      'fuel_level',
+      'kraftstoff',
+      'tankinhalt',
+      'tankfüllung',
+      'tankfuellung',
+      'kraftstoffstand',
+      'tank level',
+      'range tank level'
+    ]);
+    const range = this._pickEntity(entities, used, ['sensor'], [
+      'range',
+      'remaining',
+      'remaining_range',
+      'remainingrange',
+      'reichweite',
+      'restreichweite',
+      'reichweite_km',
+      'range total',
+      'total range',
+      'range_total_range',
+      'total_range',
+      'range_total_range_last_sent'
+    ]);
     const electricRange = this._pickEntity(entities, used, ['sensor'], [
       'electric range',
       'ev range',
       'remaining electric range',
-      'kombi remaining electric range'
+      'kombi remaining electric range',
+      'elektrische reichweite',
+      'ev-reichweite'
     ]);
-    const fuelRange = this._pickEntity(entities, used, ['sensor'], ['fuel range', 'remaining fuel', 'tank level']);
-    const totalRange = this._pickEntity(entities, used, ['sensor'], ['total remaining range', 'total range']);
+    const fuelRange = this._pickEntity(entities, used, ['sensor'], [
+      'fuel range',
+      'remaining fuel',
+      'tank level',
+      'kraftstoffreichweite'
+    ]);
+    const totalRange = this._pickEntity(entities, used, ['sensor'], [
+      'total remaining range',
+      'total range',
+      'gesamtreichweite'
+    ]);
     const chargeTarget = this._pickEntity(entities, used, ['sensor', 'number'], [
       'target',
       'charge target',
       'target soc',
-      'target state'
+      'target state',
+      'ladeziel',
+      'ziel'
     ]);
-    const odometer = this._pickEntity(entities, used, ['sensor'], ['odometer', 'mileage', 'distance', 'travelled']);
-    const temperature = this._pickEntity(entities, used, ['sensor'], ['temperature', 'temp', 'coolant']);
+    const odometer = this._pickEntity(entities, used, ['sensor'], [
+      'odometer',
+      'mileage',
+      'distance',
+      'travelled',
+      'kilometerstand',
+      'kilometer',
+      'odo',
+      'vehicle mileage'
+    ]);
+    const temperature = this._pickEntity(entities, used, ['sensor'], [
+      'temperature',
+      'temp',
+      'coolant',
+      'temperatur',
+      'innen',
+      'innenraum'
+    ]);
     const chargingPower = this._pickEntity(entities, used, ['sensor'], [
       'charging power',
       'charge power',
       'power',
-      'grid energy'
+      'grid energy',
+      'ladeleistung',
+      'leistung'
     ]);
     const chargingTime = this._pickEntity(entities, used, ['sensor'], [
       'time remaining',
       'time to fully',
       'time to full',
-      'remaining time'
+      'remaining time',
+      'restzeit',
+      'ladezeit',
+      'verbleibend'
     ]);
     const preconditioning = this._pickEntity(entities, used, ['binary_sensor', 'sensor', 'switch'], [
       'preconditioning',
       'climatization',
       'climate',
       'hvac',
-      'defrost'
+      'defrost',
+      'vorklimatisierung',
+      'klimatisierung',
+      'vorheizen',
+      'klima'
     ]);
-    const engine = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], ['engine', 'ignition']);
-    const motion = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], ['moving', 'motion', 'driving', 'parking']);
-    const alarm = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], ['alarm', 'anti theft', 'anti-theft']);
+    const engine = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
+      'engine',
+      'ignition',
+      'motor',
+      'zündung',
+      'zuendung'
+    ]);
+    const motion = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
+      'moving',
+      'motion',
+      'driving',
+      'parking',
+      'fährt',
+      'bewegt',
+      'parked',
+      'stand',
+      'status',
+      'fahrstatus',
+      'pwf',
+      'pwf status'
+    ]);
+    const alarm = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
+      'alarm',
+      'anti theft',
+      'anti-theft',
+      'diebstahl',
+      'security',
+      'alarmsystem'
+    ]);
 
     const rowMainItems: any[] = [];
     if (lock) rowMainItems.push({ type: 'entity', entity: lock, icon: 'mdi:lock' });
@@ -913,9 +1045,25 @@ class BMWStatusCard extends LitElement {
       'roof',
       'flap',
       'lock',
-      'flap',
       'charging port',
-      'port'
+      'port',
+      'tür',
+      'fenster',
+      'kofferraum',
+      'heckklappe',
+      'motorhaube',
+      'schiebedach',
+      'dach',
+      'klappe',
+      'panoramadach',
+      'door state',
+      'doors overall',
+      'window state',
+      'sunroof state',
+      'sunroof tilt',
+      'tailgate door',
+      'tailgate rear window',
+      'tailgate state'
     ]);
 
     const tireEntities = this._pickEntities(entities, used, ['sensor'], [
@@ -924,19 +1072,30 @@ class BMWStatusCard extends LitElement {
       'pressure',
       'wheel',
       'tpms',
-      'pressure target'
+      'pressure target',
+      'reifen',
+      'reifendruck',
+      'rad',
+      'solldruck',
+      'target pressure',
+      'tire pressure target'
     ]);
     const tireTempEntities = this._pickEntities(entities, used, ['sensor'], [
       'tire temperature',
       'tyre temperature',
-      'wheel temperature'
+      'wheel temperature',
+      'reifentemperatur'
     ]);
     const lightEntities = this._pickEntities(entities, used, ['binary_sensor', 'sensor', 'switch'], [
       'light',
       'lights',
       'headlight',
       'lamp',
-      'running light'
+      'running light',
+      'licht',
+      'scheinwerfer',
+      'abblendlicht',
+      'fernlicht'
     ]);
     const climateEntities = this._pickEntities(entities, used, ['binary_sensor', 'sensor', 'switch', 'climate'], [
       'climate',
@@ -948,14 +1107,26 @@ class BMWStatusCard extends LitElement {
       'air purification',
       'heater',
       'heating',
-      'cooling'
+      'cooling',
+      'klima',
+      'sitzheizung',
+      'lenkrad',
+      'heizung',
+      'kühlung',
+      'aircon',
+      'ac',
+      'klimastatus',
+      'climate timer'
     ]);
     const serviceEntities = this._pickEntities(entities, used, ['sensor', 'binary_sensor'], [
       'service',
       'inspection',
       'cbs',
       'check control',
-      'maintenance'
+      'maintenance',
+      'wartung',
+      'inspektion',
+      'servicebedarf'
     ]);
     const navigationEntities = this._pickEntities(entities, used, ['sensor', 'device_tracker'], [
       'navigation',
@@ -963,7 +1134,21 @@ class BMWStatusCard extends LitElement {
       'eta',
       'latitude',
       'longitude',
-      'gps'
+      'gps',
+      'ziel',
+      'ankunft',
+      'route',
+      'routing',
+      'navi',
+      'position',
+      'lat',
+      'lon',
+      'navigationsstatus',
+      'navigationsziel',
+      'ankunftsort',
+      'ankunftsort breitengrad',
+      'ankunftsort längengrad',
+      'ankunftsort laengengrad'
     ]);
     const chargingEntities = this._pickEntities(entities, used, ['sensor', 'binary_sensor', 'switch', 'number'], [
       'charging',
@@ -973,7 +1158,12 @@ class BMWStatusCard extends LitElement {
       'charging mode',
       'charging power',
       'time to fully',
-      'charge target'
+      'charge target',
+      'laden',
+      'lade',
+      'ladeziel',
+      'ladestatus',
+      'ladekabel'
     ]);
 
     const indicator_rows: any[] = [];
@@ -1312,13 +1502,15 @@ class BMWStatusCard extends LitElement {
     keywords: string[],
     used: Set<string>
   ): EntityInfo[] {
-    const normalizedKeywords = keywords.map((k) => k.toLowerCase());
+    const normalizedKeywords = keywords.map((k) => this._normalizeText(k));
     return entities
       .filter((entity) => !used.has(entity.entity_id))
       .filter((entity) => (domains.length ? domains.includes(entity.domain) : true))
       .filter((entity) => {
         if (!normalizedKeywords.length) return true;
-        const haystack = `${entity.entity_id} ${entity.name} ${entity.device_class ?? ''}`.toLowerCase();
+        const haystack = this._normalizeText(
+          `${entity.entity_id} ${entity.name} ${entity.device_class ?? ''}`
+        );
         return normalizedKeywords.some((k) => haystack.includes(k));
       })
       .sort((a, b) => {
@@ -1328,6 +1520,16 @@ class BMWStatusCard extends LitElement {
         if (bState === 'unknown' && aState !== 'unknown') return -1;
         return a.name.localeCompare(b.name);
       });
+  }
+
+  private _normalizeText(value: string): string {
+    return value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[ -]/g, ' ')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
   }
 
   private _findEntityByKeywords(entities: EntityInfo[], keywords: string[]): string | undefined {
@@ -1797,7 +1999,7 @@ class BMWStatusCardEditor extends LitElement {
     const ai = this._config.image?.ai || {};
     const aiProvider = ai.provider || 'ha_ai_task';
     const onDemand = ai.generate_on_demand !== false;
-    const uploadEnabled = ai.upload ?? (aiProvider === 'openai' || aiProvider === 'gemini');
+    const uploadEnabled = ai.upload ?? (aiProvider === 'openai' || aiProvider === 'gemini' || aiProvider === 'ha_ai_task');
     try {
       return html`
         <div class="form">
@@ -1929,7 +2131,7 @@ class BMWStatusCardEditor extends LitElement {
                       ></ha-entity-picker>
                     `
                   : null}
-                ${aiProvider === 'openai' || aiProvider === 'gemini'
+                ${aiProvider === 'openai' || aiProvider === 'gemini' || aiProvider === 'ha_ai_task'
                   ? html`
                       <div class="row">
                         <div class="field">

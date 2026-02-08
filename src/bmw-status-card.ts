@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.24';
+const VERSION = '0.1.25';
 
 type HassState = {
   entity_id: string;
@@ -115,10 +115,48 @@ class BMWStatusCard extends LitElement {
   private _entityEntriesCache?: EntityRegistryEntry[];
   private _deviceEntriesCache?: DeviceRegistryEntry[];
   private _lastVehicleConfigKey?: string;
+  private _statusEntities?: {
+    fuel?: string;
+    motion?: string;
+    doors: string[];
+    tires: string[];
+    tireTargets: string[];
+  };
 
   static styles = css`
     :host {
       display: block;
+    }
+    .card-wrapper {
+      position: relative;
+    }
+    .status-overlay {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 3;
+      pointer-events: none;
+      max-width: 60%;
+    }
+    .status-badge {
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary-text-color);
+      background: rgba(0, 0, 0, 0.15);
+      backdrop-filter: blur(6px);
+    }
+    .status-badge.warning {
+      background: rgba(255, 193, 7, 0.85);
+      color: #1a1a1a;
+    }
+    .status-badge.alert {
+      background: rgba(239, 83, 80, 0.9);
+      color: #fff;
     }
     .message {
       padding: 12px 16px;
@@ -250,11 +288,11 @@ class BMWStatusCard extends LitElement {
       if (!value.length) return '[]';
       return value
         .map((item) => {
-          const rendered = this._toYaml(item, indent + 1);
-          if (rendered.includes('\n')) {
-            return `${pad}- ${rendered.replace(/\n/g, `\n${pad}  `)}`;
+          if (item !== null && typeof item === 'object') {
+            const rendered = this._toYaml(item, indent + 1);
+            return `${pad}-\n${rendered}`;
           }
-          return `${pad}- ${rendered}`;
+          return `${pad}- ${this._toYaml(item, indent + 1).trimStart()}`;
         })
         .join('\n');
     }
@@ -263,11 +301,11 @@ class BMWStatusCard extends LitElement {
       if (!entries.length) return '{}';
       return entries
         .map(([key, val]) => {
-          const rendered = this._toYaml(val, indent + 1);
-          if (rendered.includes('\n')) {
-            return `${pad}${key}:\n${rendered.replace(/\n/g, `\n${pad}  `)}`;
+          if (val !== null && typeof val === 'object') {
+            const rendered = this._toYaml(val, indent + 1);
+            return `${pad}${key}:\n${rendered}`;
           }
-          return `${pad}${key}: ${rendered}`;
+          return `${pad}${key}: ${this._toYaml(val, indent + 1).trimStart()}`;
         })
         .join('\n');
     }
@@ -501,7 +539,8 @@ class BMWStatusCard extends LitElement {
       '{color}': vehicleInfo.color || '',
       '{trim}': vehicleInfo.trim || '',
       '{body}': vehicleInfo.body || '',
-      '{angle}': view || ''
+      '{angle}': view || '',
+      '{status}': this._getVehicleStatusLabel() || ''
     };
 
     let prompt = rawTemplate;
@@ -512,6 +551,11 @@ class BMWStatusCard extends LitElement {
 
     if (view && !rawTemplate.includes('{angle}')) {
       prompt = `${prompt} ${view}`;
+    }
+
+    const statusLabel = this._getVehicleStatusLabel();
+    if (statusLabel && !rawTemplate.includes('{status}')) {
+      prompt = `${prompt} status: ${statusLabel}`;
     }
 
     return prompt.replace(/\s+/g, ' ').trim();
@@ -1135,6 +1179,9 @@ class BMWStatusCard extends LitElement {
       'wheel temperature',
       'reifentemperatur'
     ]);
+    const tireTargetEntities = tireEntities.filter((entity) => this._isTireTargetEntity(entity));
+    const tireActualEntities = tireEntities.filter((entity) => !this._isTireTargetEntity(entity));
+    const doorSummaryEntities = doorEntities.filter((entity) => this._isDoorSummaryEntity(entity));
     const lightEntities = this._pickEntities(entities, used, ['binary_sensor', 'sensor', 'switch'], [
       'light',
       'lights',
@@ -1222,28 +1269,33 @@ class BMWStatusCard extends LitElement {
     if (rowInfoItems.length) {
       indicator_rows.push({ row_items: rowInfoItems, alignment: 'center', no_wrap: true });
     }
-    if (doorEntities.length || tireEntities.length) {
-      const row_items: any[] = [];
-      if (doorEntities.length) {
-        row_items.push({
-          type: 'group',
-          name: 'Öffnungen',
-          icon: 'mdi:car-door',
-          items: doorEntities.map((entity) => ({ type: 'entity', entity }))
-        });
-      }
-      const tireGroupItems = [...tireEntities, ...tireTempEntities];
-      if (tireGroupItems.length) {
-        row_items.push({
-          type: 'group',
-          name: 'Reifen',
-          icon: 'mdi:car-tire-alert',
-          items: tireGroupItems.map((entity) => ({ type: 'entity', entity }))
-        });
-      }
-      if (row_items.length) {
-        indicator_rows.push({ row_items, alignment: 'center', no_wrap: true });
-      }
+    if (tireActualEntities.length) {
+      indicator_rows.push({
+        row_items: tireActualEntities.map((entity) => ({ type: 'entity', entity })),
+        alignment: 'center',
+        no_wrap: true
+      });
+    }
+    if (doorSummaryEntities.length) {
+      indicator_rows.push({
+        row_items: doorSummaryEntities.map((entity) => ({ type: 'entity', entity })),
+        alignment: 'center',
+        no_wrap: true
+      });
+    }
+    if (tireActualEntities.length) {
+      indicator_rows.push({
+        row_items: tireActualEntities.map((entity) => ({ type: 'entity', entity })),
+        alignment: 'center',
+        no_wrap: true
+      });
+    }
+    if (doorSummaryEntities.length) {
+      indicator_rows.push({
+        row_items: doorSummaryEntities.map((entity) => ({ type: 'entity', entity })),
+        alignment: 'center',
+        no_wrap: true
+      });
     }
 
     const extraGroups: any[] = [];
@@ -1318,6 +1370,14 @@ class BMWStatusCard extends LitElement {
     const tireCard = this._buildTireCardConfig(entities);
     const buttonExclusions = new Set<string>(tireCard?.entities || []);
 
+    this._statusEntities = {
+      fuel,
+      motion,
+      doors: doorEntities,
+      tires: tireActualEntities,
+      tireTargets: tireTargetEntities
+    };
+
     const specialButtons: any[] = [];
     const statusItems: any[] = [];
     const serviceItems: any[] = [];
@@ -1361,6 +1421,37 @@ class BMWStatusCard extends LitElement {
         }
       });
       serviceItems.forEach((item) => buttonExclusions.add(item.entity));
+    }
+
+    if (doorEntities.length) {
+      specialButtons.push({
+        name: 'Öffnungen',
+        icon: 'mdi:car-door',
+        button_type: 'default',
+        card_type: 'default',
+        sub_card: {
+          default_card: [
+            {
+              title: 'Öffnungen',
+              items: doorEntities.map((entity) => ({ entity }))
+            }
+          ]
+        }
+      });
+      doorEntities.forEach((entity) => buttonExclusions.add(entity));
+    }
+
+    if (tireCard?.tire_card) {
+      specialButtons.push({
+        name: 'Reifen',
+        icon: 'mdi:car-tire-alert',
+        button_type: 'default',
+        card_type: 'tire',
+        sub_card: {
+          tire_card: tireCard.tire_card
+        }
+      });
+      (tireCard.entities || []).forEach((entity) => buttonExclusions.add(entity));
     }
 
     if (chargingEntities.length) {
@@ -1605,6 +1696,121 @@ class BMWStatusCard extends LitElement {
     return { tire_card, entities: entitiesUsed };
   }
 
+  private _isTireTargetEntity(entityId: string): boolean {
+    const text = this._normalizeText(entityId);
+    return text.includes('target') || text.includes('solldruck');
+  }
+
+  private _isDoorSummaryEntity(entityId: string): boolean {
+    const text = this._normalizeText(entityId);
+    return (
+      text.includes('overall') ||
+      text.includes('hood') ||
+      text.includes('tailgate') ||
+      text.includes('sunroof overall')
+    );
+  }
+
+  private _getVehicleStatusLabel(): string | undefined {
+    const entityId = this._statusEntities?.motion;
+    if (!entityId || !this.hass) return undefined;
+    const state = this.hass.states[entityId]?.state;
+    if (!state) return undefined;
+    const normalized = this._normalizeText(state);
+    if (normalized.includes('driving') || normalized.includes('fahrt')) return 'driving';
+    if (normalized.includes('standing') || normalized.includes('stand')) return 'standing';
+    if (normalized.includes('park') || normalized.includes('parken')) return 'parked';
+    return state;
+  }
+
+  private _buildStatusBadges(): Array<{ label: string; level: 'warning' | 'alert' }> {
+    if (!this.hass || !this._statusEntities) return [];
+    const badges: Array<{ label: string; level: 'warning' | 'alert' }> = [];
+
+    const fuelEntity = this._statusEntities.fuel;
+    if (fuelEntity) {
+      const stateObj = this.hass.states[fuelEntity];
+      const value = Number(stateObj?.state);
+      const unit = stateObj?.attributes?.unit_of_measurement;
+      if (!Number.isNaN(value)) {
+        const lowFuel = unit === '%' ? value <= 15 : value <= 10;
+        if (lowFuel) {
+          badges.push({ label: 'Tank niedrig', level: 'warning' });
+        }
+      }
+    }
+
+    const tireBad = this._hasLowTirePressure();
+    if (tireBad) {
+      badges.push({ label: 'Reifendruck niedrig', level: 'alert' });
+    }
+
+    const doorsOpenWhileParked = this._hasDoorsOpenWhileParked();
+    if (doorsOpenWhileParked) {
+      badges.push({ label: 'Öffnungen offen', level: 'warning' });
+    }
+
+    return badges;
+  }
+
+  private _hasLowTirePressure(): boolean {
+    if (!this.hass || !this._statusEntities) return false;
+    const actuals = this._statusEntities.tires || [];
+    const targets = this._statusEntities.tireTargets || [];
+    if (!actuals.length) return false;
+
+    const targetMap = new Map<string, number>();
+    targets.forEach((entityId) => {
+      const state = this.hass.states[entityId]?.state;
+      const value = Number(state);
+      if (!Number.isNaN(value)) {
+        const key = this._tirePositionKey(entityId);
+        if (key) targetMap.set(key, value);
+      }
+    });
+
+    return actuals.some((entityId) => {
+      const state = this.hass.states[entityId]?.state;
+      const value = Number(state);
+      if (Number.isNaN(value)) return false;
+      const key = this._tirePositionKey(entityId);
+      const target = key ? targetMap.get(key) : undefined;
+      if (target !== undefined) return value < target * 0.9;
+      return value < 200;
+    });
+  }
+
+  private _tirePositionKey(entityId: string): string | undefined {
+    const text = this._normalizeText(entityId);
+    if (text.includes('front') && text.includes('left')) return 'front_left';
+    if (text.includes('front') && text.includes('right')) return 'front_right';
+    if (text.includes('rear') && text.includes('left')) return 'rear_left';
+    if (text.includes('rear') && text.includes('right')) return 'rear_right';
+    return undefined;
+  }
+
+  private _hasDoorsOpenWhileParked(): boolean {
+    if (!this.hass || !this._statusEntities) return false;
+    const status = this._getVehicleStatusLabel();
+    if (status !== 'parked' && status !== 'standing') return false;
+    const doors = this._statusEntities.doors || [];
+    return doors.some((entityId) => {
+      const state = this.hass.states[entityId]?.state;
+      if (!state) return false;
+      const normalized = this._normalizeText(state);
+      return ![
+        'closed',
+        'geschlossen',
+        'secured',
+        'gesichert',
+        'locked',
+        'verriegelt',
+        'ok',
+        'aus'
+      ].some((token) => normalized.includes(token));
+    });
+  }
+
   protected render() {
     if (this._error) {
       return html`
@@ -1644,7 +1850,19 @@ class BMWStatusCard extends LitElement {
       `;
     }
 
-    return html`<vehicle-status-card></vehicle-status-card>`;
+    const badges = this._buildStatusBadges();
+    return html`
+      <div class="card-wrapper">
+        <vehicle-status-card></vehicle-status-card>
+        ${badges.length
+          ? html`<div class="status-overlay">
+              ${badges.map(
+                (badge) => html`<div class="status-badge ${badge.level}">${badge.label}</div>`
+              )}
+            </div>`
+          : null}
+      </div>
+    `;
   }
 }
 

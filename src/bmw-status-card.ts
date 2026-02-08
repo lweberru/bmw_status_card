@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.16';
+const VERSION = '0.1.17';
 
 type HassState = {
   entity_id: string;
@@ -594,30 +594,52 @@ class BMWStatusCard extends LitElement {
   private async _fetchHaAiTaskImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
     if (!this.hass) throw new Error('Home Assistant nicht verfügbar.');
 
-    const serviceData: Record<string, any> = {
-      prompt,
-      n: count
-    };
-
-    if (ai.ha_entity_id) serviceData.entity_id = ai.ha_entity_id;
-    if (ai.model) serviceData.model = ai.model;
-    if (ai.size) serviceData.size = ai.size;
-    if (ai.aspect_ratio) serviceData.aspect_ratio = ai.aspect_ratio;
+    const baseData: Record<string, any> = {};
+    if (ai.ha_entity_id) baseData.entity_id = ai.ha_entity_id;
+    if (ai.model) baseData.model = ai.model;
+    if (ai.size) baseData.size = ai.size;
+    if (ai.aspect_ratio) baseData.aspect_ratio = ai.aspect_ratio;
     if (ai.request_body) {
-      Object.assign(serviceData, ai.request_body);
+      Object.assign(baseData, ai.request_body);
     }
 
+    const taskName = this._vehicleInfo?.name || this._config?.vehicle_info?.name || 'BMW Status Card';
+
+    const attempts: Array<Record<string, any>> = [
+      { task_name: taskName, instructions: prompt },
+      { task_name: taskName, instructions: prompt, n: count },
+      { prompt, n: count },
+      { prompt },
+      { text: prompt, n: count },
+      { text: prompt },
+      { input: prompt, n: count },
+      { input: prompt },
+      { task: prompt, n: count },
+      { task: prompt },
+      { description: prompt, n: count },
+      { description: prompt }
+    ];
+
     let response: any;
-    try {
-      response = await this.hass.callWS({
-        type: 'call_service',
-        domain: 'ai_task',
-        service: 'generate_image',
-        service_data: serviceData,
-        return_response: true
-      });
-    } catch (err: any) {
-      throw new Error(`ai_task Fehler: ${err?.message || String(err)}`);
+    let lastError: any;
+    for (const attempt of attempts) {
+      try {
+        response = await this.hass.callWS({
+          type: 'call_service',
+          domain: 'ai_task',
+          service: 'generate_image',
+          service_data: { ...baseData, ...attempt },
+          return_response: true
+        });
+        lastError = undefined;
+        break;
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+
+    if (!response) {
+      throw new Error(`ai_task Fehler: ${lastError?.message || String(lastError)}`);
     }
 
     const payload = response?.response ?? response?.result ?? response;
@@ -1422,6 +1444,9 @@ class BMWStatusCardEditor extends LitElement {
       align-items: center;
       flex-wrap: wrap;
     }
+    .actions ha-button {
+      --mdc-theme-primary: var(--primary-color);
+    }
     ha-alert {
       margin-bottom: 8px;
     }
@@ -1801,20 +1826,23 @@ class BMWStatusCardEditor extends LitElement {
                       <option value="generic">Generic Endpoint</option>
                     </select>
                   </div>
-                  <ha-textfield
-                    label="AI API Key (erforderlich für OpenAI/Gemini)"
-                    .value=${ai.api_key || ''}
-                    data-path="image.ai.api_key"
-                    @input=${this._onValueChanged}
-                    ?disabled=${aiProvider === 'ha_ai_task'}
-                  ></ha-textfield>
+                  ${aiProvider === 'openai' || aiProvider === 'gemini'
+                    ? html`
+                        <ha-textfield
+                          label="AI API Key (erforderlich für OpenAI/Gemini)"
+                          .value=${ai.api_key || ''}
+                          data-path="image.ai.api_key"
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                      `
+                    : null}
                 </div>
                 <div class="actions">
-                  <mwc-button
+                  <ha-button
                     raised
                     @click=${() =>
                       this._setConfigValue('image.ai.generate_request_id', String(Date.now()))}
-                  >Generate Images</mwc-button>
+                  >Generate Images</ha-button>
                   ${onDemand
                     ? html`<div class="hint">Bilder werden nur nach Klick generiert (Cache aktiv).</div>`
                     : html`<div class="hint">Auto-Generierung aktiv.</div>`}
@@ -1833,61 +1861,78 @@ class BMWStatusCardEditor extends LitElement {
                       ></ha-entity-picker>
                     `
                   : null}
-                <div class="row">
-                  ${aiProvider === 'gemini' && this._geminiModels?.length
-                    ? html`
-                        <div class="field">
-                          <label class="hint">Gemini Model (aus ListModels)</label>
-                          <select
-                            data-path="image.ai.model"
-                            @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                            .value=${ai.model || ''}
-                          >
-                            <option value="">Auto (Standard)</option>
-                            ${this._geminiModels.map(
-                              (model) => html`<option value=${model}>${model}</option>`
-                            )}
-                          </select>
-                        </div>
-                      `
-                    : aiProvider === 'openai' && this._openAiModels?.length
-                      ? html`
-                          <div class="field">
-                            <label class="hint">OpenAI Model (gefiltert)</label>
-                            <select
-                              data-path="image.ai.model"
-                              @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                              .value=${ai.model || ''}
-                            >
-                              <option value="">Auto (Standard)</option>
-                              ${this._openAiModels.map(
-                                (model) => html`<option value=${model}>${model}</option>`
-                              )}
-                            </select>
-                          </div>
-                        `
-                      : html`
+                ${aiProvider !== 'generic'
+                  ? html`
+                      <div class="row">
+                        ${aiProvider === 'gemini' && this._geminiModels?.length
+                          ? html`
+                              <div class="field">
+                                <label class="hint">Gemini Model (aus ListModels)</label>
+                                <select
+                                  data-path="image.ai.model"
+                                  @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                                  .value=${ai.model || ''}
+                                >
+                                  <option value="">Auto (Standard)</option>
+                                  ${this._geminiModels.map(
+                                    (model) => html`<option value=${model}>${model}</option>`
+                                  )}
+                                </select>
+                              </div>
+                            `
+                          : aiProvider === 'openai' && this._openAiModels?.length
+                            ? html`
+                                <div class="field">
+                                  <label class="hint">OpenAI Model (gefiltert)</label>
+                                  <select
+                                    data-path="image.ai.model"
+                                    @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                                    .value=${ai.model || ''}
+                                  >
+                                    <option value="">Auto (Standard)</option>
+                                    ${this._openAiModels.map(
+                                      (model) => html`<option value=${model}>${model}</option>`
+                                    )}
+                                  </select>
+                                </div>
+                              `
+                            : html`
+                                <ha-textfield
+                                  label="AI Model (optional)"
+                                  .value=${ai.model || ''}
+                                  placeholder="OpenAI: gpt-image-1 | Gemini: imagen-3.0-generate-002"
+                                  data-path="image.ai.model"
+                                  @input=${this._onValueChanged}
+                                ></ha-textfield>
+                              `}
+                        ${aiProvider === 'openai'
+                          ? html`
+                              <div class="field">
+                                <label class="hint">Bildgröße (OpenAI)</label>
+                                <select
+                                  data-path="image.ai.size"
+                                  @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                                  .value=${ai.size || '1024x1024'}
+                                >
+                                  <option value="1024x1024">1024x1024</option>
+                                  <option value="1792x1024">1792x1024</option>
+                                  <option value="1024x1792">1024x1792</option>
+                                </select>
+                              </div>
+                            `
+                          : null}
+                      </div>
+                    `
+                  : html`
+                      <div class="row">
                         <ha-textfield
-                          label="AI Model (optional)"
-                          .value=${ai.model || ''}
-                          placeholder="OpenAI: gpt-image-1 | Gemini: imagen-3.0-generate-002"
-                          data-path="image.ai.model"
+                          label="AI Endpoint (erforderlich)"
+                          .value=${ai.endpoint || ''}
+                          data-path="image.ai.endpoint"
                           @input=${this._onValueChanged}
                         ></ha-textfield>
-                      `}
-                  <div class="field">
-                    <label class="hint">Bildgröße (OpenAI)</label>
-                    <select
-                      data-path="image.ai.size"
-                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                      .value=${ai.size || '1024x1024'}
-                    >
-                      <option value="1024x1024">1024x1024</option>
-                      <option value="1792x1024">1792x1024</option>
-                      <option value="1024x1792">1024x1792</option>
-                    </select>
-                  </div>
-                </div>
+                      </div>
+                    `}
                 ${aiProvider === 'gemini' && this._geminiModelsLoading
                   ? html`<div class="hint">Lade Gemini-Modelle…</div>`
                   : null}
@@ -1901,20 +1946,24 @@ class BMWStatusCardEditor extends LitElement {
                   ? html`<div class="hint">${this._openAiModelsError}</div>`
                   : null}
                 <div class="row">
-                  <div class="field">
-                    <label class="hint">Aspect Ratio (Gemini)</label>
-                    <select
-                      data-path="image.ai.aspect_ratio"
-                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                      .value=${ai.aspect_ratio || '1:1'}
-                    >
-                      <option value="1:1">1:1</option>
-                      <option value="4:3">4:3</option>
-                      <option value="3:4">3:4</option>
-                      <option value="16:9">16:9</option>
-                      <option value="9:16">9:16</option>
-                    </select>
-                  </div>
+                  ${aiProvider === 'gemini'
+                    ? html`
+                        <div class="field">
+                          <label class="hint">Aspect Ratio (Gemini)</label>
+                          <select
+                            data-path="image.ai.aspect_ratio"
+                            @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                            .value=${ai.aspect_ratio || '1:1'}
+                          >
+                            <option value="1:1">1:1</option>
+                            <option value="4:3">4:3</option>
+                            <option value="3:4">3:4</option>
+                            <option value="16:9">16:9</option>
+                            <option value="9:16">9:16</option>
+                          </select>
+                        </div>
+                      `
+                    : null}
                   <ha-textfield
                     label="Anzahl pro Prompt"
                     .value=${ai.count ?? ''}

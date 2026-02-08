@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.22';
+const VERSION = '0.1.23';
 
 type HassState = {
   entity_id: string;
@@ -204,6 +204,7 @@ class BMWStatusCard extends LitElement {
     if (!this._config.bmw_home_device_id || !this._config.bmw_cardata_device_id) return;
 
     this._loading = true;
+      this._vehicleConfig = undefined;
     try {
       // eslint-disable-next-line no-console
       console.debug('[bmw-status-card] building config');
@@ -227,6 +228,45 @@ class BMWStatusCard extends LitElement {
       this._loading = false;
       this.requestUpdate();
     }
+  }
+
+  private _toYaml(value: any, indent = 0): string {
+    const pad = '  '.repeat(indent);
+    if (value === null || value === undefined) return 'null';
+    if (typeof value === 'string') {
+      if (value === '' || /[:#\-?{}[\],&*!|>'"%@`\n\r\t]/.test(value)) {
+        const escaped = value.replace(/"/g, '\\"');
+        return `"${escaped}"`;
+      }
+      return value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+      if (!value.length) return '[]';
+      return value
+        .map((item) => {
+          const rendered = this._toYaml(item, indent + 1);
+          if (rendered.includes('\n')) {
+            return `${pad}- ${rendered.replace(/\n/g, `\n${pad}  `)}`;
+          }
+          return `${pad}- ${rendered}`;
+        })
+        .join('\n');
+    }
+    if (typeof value === 'object') {
+      const entries = Object.entries(value).filter(([, v]) => v !== undefined);
+      if (!entries.length) return '{}';
+      return entries
+        .map(([key, val]) => {
+          const rendered = this._toYaml(val, indent + 1);
+          if (rendered.includes('\n')) {
+            return `${pad}${key}:\n${rendered.replace(/\n/g, `\n${pad}  `)}`;
+          }
+          return `${pad}${key}: ${rendered}`;
+        })
+        .join('\n');
+    }
+    return String(value);
   }
 
   private async _getEntityRegistry(): Promise<EntityRegistryEntry[]> {
@@ -927,12 +967,15 @@ class BMWStatusCard extends LitElement {
       'gesamtreichweite'
     ]);
     const chargeTarget = this._pickEntity(entities, used, ['sensor', 'number'], [
-      'target',
       'charge target',
       'target soc',
       'target state',
+      'charge limit',
+      'charge_limit',
+      'charge_limit_soc',
       'ladeziel',
-      'ziel'
+      'ladegrenze',
+      'ladegrenze soc'
     ]);
     const odometer = this._pickEntity(entities, used, ['sensor'], [
       'odometer',
@@ -1410,12 +1453,7 @@ class BMWStatusCard extends LitElement {
         range_info_config: {
           layout: 'row'
         },
-        single_tire_card: tireCard?.tire_card
-          ? {
-              enabled: true,
-              tire_card: tireCard.tire_card
-            }
-          : undefined
+        single_tire_card: undefined
       }
     };
   }
@@ -1575,7 +1613,7 @@ class BMWStatusCard extends LitElement {
         <ha-card>
           <div class="message">
             <strong>Debug: vehicle-status-card config</strong>
-            <pre>${JSON.stringify(this._vehicleConfig, null, 2)}</pre>
+            <pre>${this._toYaml(this._vehicleConfig)}</pre>
           </div>
         </ha-card>
       `;

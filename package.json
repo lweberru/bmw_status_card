@@ -1,6 +1,6 @@
 {
   "name": "bmw-status-card",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "BMW Status Card for Home Assistant (auto-config using bmw_home + bmw-cardata-ha)",
   "type": "module",
   "scripts": {

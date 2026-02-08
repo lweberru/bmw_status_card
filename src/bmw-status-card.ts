@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.23';
+const VERSION = '0.1.24';
 
 type HassState = {
   entity_id: string;
@@ -114,6 +114,7 @@ class BMWStatusCard extends LitElement {
   private _vehicleInfo?: VehicleInfo;
   private _entityEntriesCache?: EntityRegistryEntry[];
   private _deviceEntriesCache?: DeviceRegistryEntry[];
+  private _lastVehicleConfigKey?: string;
 
   static styles = css`
     :host {
@@ -159,7 +160,11 @@ class BMWStatusCard extends LitElement {
     if (vehicleCard && this.hass) {
       vehicleCard.hass = this.hass;
       if (this._vehicleConfig) {
-        vehicleCard.setConfig(this._vehicleConfig);
+        const nextKey = this._hash(JSON.stringify(this._vehicleConfig));
+        if (this._lastVehicleConfigKey !== nextKey) {
+          this._lastVehicleConfigKey = nextKey;
+          vehicleCard.setConfig(this._vehicleConfig);
+        }
       }
     }
   }
@@ -287,6 +292,7 @@ class BMWStatusCard extends LitElement {
     const deviceSet = new Set(deviceIds);
     return entries
       .filter((entry) => entry.device_id && deviceSet.has(entry.device_id))
+      .filter((entry) => !entry.disabled_by)
       .map((entry) => {
         const state = this.hass.states[entry.entity_id];
         const domain = entry.entity_id.split('.')[0];

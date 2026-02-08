@@ -1,15 +1,15 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.17
+Version: 0.1.19
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
 ## Voraussetzungen
 
-- **bmw_home** und **bmw-cardata-ha** sind installiert und liefern Entities.
-- **vehicle-status-card** ist installiert (HACS) oder wird per Resource geladen.
-- Für persistente KI-Bilder via OpenAI/Gemini: **downloader**-Integration aktivieren.
-- Für serverseitige KI-Bilder: **ai_task**-Integration (Home Assistant AI Tasks).
+- [bmw_home](https://labs.bmw.com/services/cba15ad5-ed53-4ad0-b8a4-6774b477eaf8) und [bmw-cardata-ha](https://github.com/JjyKsi/bmw-cardata-ha) sind installiert und liefern Entities.
+- [vehicle-status-card](https://github.com/ngocjohn/vehicle-status-card) ist installiert (HACS) oder wird per Resource geladen.
+- Für persistente KI-Bilder via OpenAI/Gemini: [upload_file](https://github.com/lweberru/upload_file) installieren.
+- Für serverseitige KI-Bilder: [ai_task](https://www.home-assistant.io/integrations/ai_task/) (Home Assistant AI Tasks).
 
 ## Installation (HACS – Custom Repository)
 
@@ -56,8 +56,8 @@ image:
     aspect_ratio: "1:1"
     count: 1
     max_images: 6
-    download: true
-    download_path: "www/bmw_status_card"
+    upload: true
+    upload_path: "www/upload_file"
     views:
       - "front 3/4 view"
       - "rear 3/4 view"
@@ -106,7 +106,7 @@ Du kannst per `vehicle_status_card` die generierte Konfiguration jederzeit über
 - Für Provider `openai` wird `image.ai.api_key` benötigt.
 - Für Provider `gemini` wird `image.ai.api_key` benötigt (Imagen API).
 - Für Provider `ha_ai_task` wird `image.ai.ha_entity_id` empfohlen.
-- `download` speichert OpenAI/Gemini-URLs über die **downloader**-Integration in `/config/www` (Zugriff via `/local/`).
+- `upload` speichert OpenAI/Gemini-URLs über die [upload_file](https://github.com/lweberru/upload_file)-Integration in `/config/www` (Zugriff via `/local/`).
 - Für `generic` kannst du einen eigenen Endpoint definieren.
 - Mit `views` kannst du mehrere Blickwinkel erzeugen (z. B. Front/Seite/Heck). Nutze dazu `{angle}` im Prompt.
 

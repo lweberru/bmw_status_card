@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.21';
+const VERSION = '0.1.22';
 
 type HassState = {
   entity_id: string;
@@ -1566,6 +1566,17 @@ class BMWStatusCard extends LitElement {
       return html`
         <ha-card>
           <div class="message error">${this._error}</div>
+        </ha-card>
+      `;
+    }
+
+    if (this._config?.debug && this._vehicleConfig) {
+      return html`
+        <ha-card>
+          <div class="message">
+            <strong>Debug: vehicle-status-card config</strong>
+            <pre>${JSON.stringify(this._vehicleConfig, null, 2)}</pre>
+          </div>
         </ha-card>
       `;
     }

@@ -37,6 +37,13 @@ const $=globalThis,E=t=>t,A=$.trustedTypes,k=A?A.createPolicy("lit-html",{create
         <ha-card>
           <div class="message error">${this._error}</div>
         </ha-card>
+      `:this._config?.debug&&this._vehicleConfig?D`
+        <ha-card>
+          <div class="message">
+            <strong>Debug: vehicle-status-card config</strong>
+            <pre>${JSON.stringify(this._vehicleConfig,null,2)}</pre>
+          </div>
+        </ha-card>
       `:customElements.get(ht)?this._vehicleConfig?D`<vehicle-status-card></vehicle-status-card>`:D`
         <ha-card>
           <div class="message">BMW Status Card wird vorbereitet…</div>
@@ -373,5 +380,5 @@ const $=globalThis,E=t=>t,A=$.trustedTypes,k=A?A.createPolicy("lit-html",{create
                 <div class="hint">Optional: Bei Prompts wird {angle} ignoriert, Views sind dann optional.</div>
               `:null}
         </div>
-      `}catch(t){return this._setEditorError(t),D`<div class="error">${this._editorError}</div>`}}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",pt),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.21"});
+      `}catch(t){return this._setEditorError(t),D`<div class="error">${this._editorError}</div>`}}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",pt),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.22"});
 //# sourceMappingURL=bmw-status-card.js.map

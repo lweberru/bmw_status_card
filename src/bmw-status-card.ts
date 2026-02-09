@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.29';
+const VERSION = '0.1.30';
 
 type HassState = {
   entity_id: string;
@@ -824,19 +824,38 @@ class BMWStatusCard extends LitElement {
   }
 
   private async _fetchAsDataUrl(url: string): Promise<string | null> {
-    try {
-      const response = await fetch(url, { credentials: 'same-origin' });
-      if (!response.ok) return null;
-      const blob = await response.blob();
-      return await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(blob);
-      });
-    } catch (_) {
-      return null;
+    const tryFetch = async (candidate: string): Promise<string | null> => {
+      try {
+        const response = await fetch(candidate, { credentials: 'same-origin' });
+        if (!response.ok) return null;
+        const blob = await response.blob();
+        return await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const candidates: string[] = [url];
+    const [baseUrl] = url.split('?');
+    if (baseUrl && baseUrl !== url) {
+      candidates.push(baseUrl);
     }
+    if (baseUrl.startsWith('/ai_task/')) {
+      candidates.push(`/api${baseUrl}`);
+    } else if (baseUrl.startsWith('/api/ai_task/')) {
+      candidates.push(baseUrl.replace('/api/ai_task/', '/ai_task/'));
+    }
+
+    for (const candidate of candidates) {
+      const dataUrl = await tryFetch(candidate);
+      if (dataUrl) return dataUrl;
+    }
+    return null;
   }
 
   private _guessImageExtension(url?: string, mimeType?: string): string {
@@ -906,9 +925,8 @@ class BMWStatusCard extends LitElement {
     const trimmed = value.trim();
     if (!trimmed) return value;
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-    if (trimmed.startsWith('/api/ai_task/')) return trimmed;
-    if (trimmed.startsWith('/ai_task/')) return `/api${trimmed}`;
-    if (trimmed.startsWith('ai_task/')) return `/api/${trimmed}`;
+    if (trimmed.startsWith('/ai_task/')) return trimmed;
+    if (trimmed.startsWith('ai_task/')) return `/${trimmed}`;
     return trimmed;
   }
 

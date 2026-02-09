@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.28';
+const VERSION = '0.1.29';
 
 type HassState = {
   entity_id: string;
@@ -464,14 +464,16 @@ class BMWStatusCard extends LitElement {
     const countPerPrompt = ai.count ?? 1;
     const maxImages = ai.max_images ?? 8;
     const onDemand = ai.generate_on_demand !== false;
-    const uploadEnabled = ai.upload ?? (provider === 'openai' || provider === 'gemini' || provider === 'ha_ai_task');
+    const uploadEnabledBase = ai.upload ?? (provider === 'openai' || provider === 'gemini' || provider === 'ha_ai_task');
+    const uploadEnabled = provider === 'ha_ai_task' ? true : uploadEnabledBase;
 
     try {
       const cachedRaw = localStorage.getItem(cacheKey);
       if (cachedRaw) {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; images: string[] };
         const ageHours = (Date.now() - cached.timestamp) / 36e5;
-        if (cached.images?.length && ageHours <= cacheHours) {
+        const hasEphemeral = cached.images?.some((image) => !this._isCacheableImageUrl(image));
+        if (cached.images?.length && ageHours <= cacheHours && !hasEphemeral) {
           return cached.images;
         }
       }
@@ -736,7 +738,9 @@ class BMWStatusCard extends LitElement {
           dataBase64 = parsed.data;
           mimeType = parsed.mimeType;
         } else if (image.startsWith('/')) {
-          const dataUrl = await this._fetchAsDataUrl(image);
+          const normalizedPath =
+            provider === 'ha_ai_task' ? this._normalizeHaAiTaskUrl(image) : image;
+          const dataUrl = await this._fetchAsDataUrl(normalizedPath);
           const fetched = dataUrl ? this._parseDataUrl(dataUrl) : null;
           if (fetched) {
             dataBase64 = fetched.data;
@@ -746,6 +750,16 @@ class BMWStatusCard extends LitElement {
               continue;
             }
             results.push(image);
+            continue;
+          }
+        } else if (provider === 'ha_ai_task' && image.startsWith('ai_task/')) {
+          const normalizedPath = this._normalizeHaAiTaskUrl(image);
+          const dataUrl = await this._fetchAsDataUrl(normalizedPath);
+          const fetched = dataUrl ? this._parseDataUrl(dataUrl) : null;
+          if (fetched) {
+            dataBase64 = fetched.data;
+            mimeType = fetched.mimeType;
+          } else {
             continue;
           }
         } else {

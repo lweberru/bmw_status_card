@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.36';
+const VERSION = '0.1.37';
 
 type HassState = {
   entity_id: string;
@@ -115,6 +115,7 @@ class BMWStatusCard extends LitElement {
   private _entityEntriesCache?: EntityRegistryEntry[];
   private _deviceEntriesCache?: DeviceRegistryEntry[];
   private _lastVehicleConfigKey?: string;
+  private _lastImageStatus?: string;
   private _statusEntities?: {
     fuel?: string;
     motion?: string;
@@ -206,6 +207,7 @@ class BMWStatusCard extends LitElement {
         }
       }
     }
+    this._maybeRefreshImagesOnStatusChange();
   }
 
   public getCardSize(): number {
@@ -272,6 +274,18 @@ class BMWStatusCard extends LitElement {
       this._loading = false;
       this.requestUpdate();
     }
+  }
+
+  private _maybeRefreshImagesOnStatusChange(): void {
+    if (!this._config?.image || this._config.image.mode !== 'ai') return;
+    const ai = this._config.image.ai || {};
+    const onDemand = ai.generate_on_demand !== false;
+    if (onDemand && !ai.generate_request_id) return;
+    const status = this._getVehicleStatusLabel() || 'unknown';
+    if (this._lastImageStatus === status) return;
+    this._lastImageStatus = status;
+    this._vehicleConfig = undefined;
+    this._ensureConfig();
   }
 
   private _toYaml(value: any, indent = 0): string {
@@ -534,6 +548,8 @@ class BMWStatusCard extends LitElement {
 
   private _buildPrompt(vehicleInfo: VehicleInfo, template?: string, view?: string): string {
     const rawTemplate = template || defaultAiTemplate;
+    const statusLabel = this._getVehicleStatusLabel();
+    const statusScene = this._getStatusScene(statusLabel);
     const tokens: Record<string, string> = {
       '{make}': vehicleInfo.make || 'BMW',
       '{model}': vehicleInfo.model || '',
@@ -543,7 +559,7 @@ class BMWStatusCard extends LitElement {
       '{trim}': vehicleInfo.trim || '',
       '{body}': vehicleInfo.body || '',
       '{angle}': view || '',
-      '{status}': this._getVehicleStatusLabel() || ''
+      '{status}': statusScene || statusLabel || ''
     };
 
     let prompt = rawTemplate;
@@ -556,12 +572,21 @@ class BMWStatusCard extends LitElement {
       prompt = `${prompt} ${view}`;
     }
 
-    const statusLabel = this._getVehicleStatusLabel();
-    if (statusLabel && !rawTemplate.includes('{status}')) {
-      prompt = `${prompt} status: ${statusLabel}`;
+    if ((statusScene || statusLabel) && !rawTemplate.includes('{status}')) {
+      prompt = statusScene ? `${prompt} ${statusScene}` : `${prompt} status: ${statusLabel}`;
     }
 
     return prompt.replace(/\s+/g, ' ').trim();
+  }
+
+  private _getStatusScene(status?: string): string | undefined {
+    if (!status) return undefined;
+    const normalized = this._normalizeText(status);
+    if (normalized.includes('driving')) return 'driving on the road, motion blur, dynamic scene';
+    if (normalized.includes('parking') || normalized.includes('parked')) return 'parked in a parking lot, stationary';
+    if (normalized.includes('standing') || normalized.includes('stand'))
+      return 'stopped at a traffic light or intersection, stationary';
+    return undefined;
   }
 
   private async _fetchOpenAiImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
@@ -981,6 +1006,8 @@ class BMWStatusCard extends LitElement {
   }
 
   private _buildImageCacheKey(vehicleInfo: VehicleInfo, ai: ImageAiConfig): string {
+    const statusLabel = this._getVehicleStatusLabel();
+    const statusScene = this._getStatusScene(statusLabel);
     const payload = {
       vehicleInfo,
       provider: ai.provider,
@@ -994,6 +1021,8 @@ class BMWStatusCard extends LitElement {
       prompt_template: ai.prompt_template,
       prompts: ai.prompts,
       views: ai.views,
+      status_label: statusLabel,
+      status_scene: statusScene,
       generate_request_id: ai.generate_on_demand !== false ? ai.generate_request_id : undefined
     };
     return `bmw-status-card:images:${this._hash(JSON.stringify(payload))}`;
@@ -1021,9 +1050,9 @@ class BMWStatusCard extends LitElement {
     ]);
     const charging = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
       'charging',
-      'charge',
-      'plugged',
-      'plug',
+      'lock', 
+      'locked', 
+      'door lock', 
       'charging port',
       'connector',
       'port',
@@ -1156,7 +1185,12 @@ class BMWStatusCard extends LitElement {
       'zündung',
       'zuendung'
     ]);
-    const motion = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
+    const pwfStatus = this._pickEntity(entities, used, ['sensor'], [
+      'bmw_pwf_status',
+      'pwf status',
+      'pwf_status'
+    ]);
+    const motion = pwfStatus || this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
       'moving',
       'motion',
       'driving',
@@ -1178,6 +1212,13 @@ class BMWStatusCard extends LitElement {
       'security',
       'alarmsystem'
     ]);
+    const alarmArming = this._pickEntity(entities, used, ['sensor'], [
+      'alarm arming',
+      'alarm_arming',
+      'alarm arming state',
+      'alarm_arming_state',
+      'arming'
+    ]);
 
     const isIndicatorEntity = (entityId?: string): boolean => {
       if (!entityId) return false;
@@ -1198,6 +1239,8 @@ class BMWStatusCard extends LitElement {
     if (engine && isIndicatorEntity(engine)) rowInfoItems.push({ type: 'entity', entity: engine, icon: 'mdi:engine' });
     if (motion && isIndicatorEntity(motion)) rowInfoItems.push({ type: 'entity', entity: motion, icon: 'mdi:car' });
     if (alarm && isIndicatorEntity(alarm)) rowInfoItems.push({ type: 'entity', entity: alarm, icon: 'mdi:alarm-light' });
+    if (alarmArming && isIndicatorEntity(alarmArming))
+      rowInfoItems.push({ type: 'entity', entity: alarmArming, icon: 'mdi:shield-lock' });
 
     const doorEntities = this._pickEntities(entities, used, ['binary_sensor', 'sensor', 'cover'], [
       'door',
@@ -1368,7 +1411,8 @@ class BMWStatusCard extends LitElement {
     if (fuel) {
       range_info.push({
         energy_level: { entity: fuel },
-        range_level: fuelRange || totalRange || range ? { entity: fuelRange || totalRange || range } : undefined
+        range_level: fuelRange || totalRange || range ? { entity: fuelRange || totalRange || range } : undefined,
+        color_template: this._buildLowFuelColorTemplate(fuel)
       });
     }
     if (!range_info.length && range) {
@@ -1407,6 +1451,8 @@ class BMWStatusCard extends LitElement {
     addItem(statusItems, temperature, 'Temperatur', 'mdi:thermometer');
     addItem(statusItems, chargingTime, 'Ladezeit', 'mdi:timer');
     addItem(statusItems, chargingPower, 'Ladeleistung', 'mdi:flash');
+    addItem(statusItems, motion, 'Fahrstatus', 'mdi:car');
+    addItem(statusItems, alarmArming, 'Alarmanlage', 'mdi:shield-lock');
 
     serviceEntities.forEach((entity) => addItem(serviceItems, entity));
 
@@ -1455,11 +1501,17 @@ class BMWStatusCard extends LitElement {
     }
 
     if (tireCard?.tire_card) {
+      const tireNotifyTemplate = this._buildLowTireNotifyTemplate(tireActualEntities);
+      const tireColorTemplate = this._buildLowTireColorTemplate(tireActualEntities);
       specialButtons.push({
         name: 'Reifen',
         icon: 'mdi:car-tire-alert',
         button_type: 'default',
         card_type: 'tire',
+        notify: tireNotifyTemplate,
+        notify_icon: 'mdi:car-tire-alert',
+        notify_color: 'var(--error-color)',
+        color_template: tireColorTemplate,
         sub_card: {
           tire_card: tireCard.tire_card
         }
@@ -1696,7 +1748,8 @@ class BMWStatusCard extends LitElement {
       const first = trimmed.split(',')[0].trim();
       return this._normalizeEntityId(first);
     }
-    return /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(trimmed) ? trimmed : undefined;
+    if (!trimmed.includes('.') || /\s/.test(trimmed)) return undefined;
+    return trimmed;
   }
 
   private _findEntityByKeywords(entities: EntityInfo[], keywords: string[]): string | undefined {
@@ -1759,8 +1812,24 @@ class BMWStatusCard extends LitElement {
     const normalized = this._normalizeText(state);
     if (normalized.includes('driving') || normalized.includes('fahrt')) return 'driving';
     if (normalized.includes('standing') || normalized.includes('stand')) return 'standing';
-    if (normalized.includes('park') || normalized.includes('parken')) return 'parked';
+    if (normalized.includes('park') || normalized.includes('parken')) return 'parking';
     return state;
+  }
+
+  private _buildLowTireNotifyTemplate(entities: string[]): string | undefined {
+    if (!entities.length) return undefined;
+    const list = entities.map((entityId) => `'${entityId}'`).join(', ');
+    return `{% set ns = namespace(low=false) %}{% for e in [${list}] %}{% set v = states(e) | float(0) %}{% if v > 0 and v < 200 %}{% set ns.low = true %}{% endif %}{% endfor %}{{ ns.low }}`;
+  }
+
+  private _buildLowTireColorTemplate(entities: string[]): string | undefined {
+    if (!entities.length) return undefined;
+    const list = entities.map((entityId) => `'${entityId}'`).join(', ');
+    return `{% set ns = namespace(low=false) %}{% for e in [${list}] %}{% set v = states(e) | float(0) %}{% if v > 0 and v < 200 %}{% set ns.low = true %}{% endif %}{% endfor %}{{ iif(ns.low, 'var(--error-color)', 'var(--secondary-text-color)') }}`;
+  }
+
+  private _buildLowFuelColorTemplate(entityId: string): string {
+    return `{% set v = states('${entityId}') | float(0) %}{{ iif(v > 0 and v < 10, 'var(--error-color)', 'var(--primary-color)') }}`;
   }
 
   private _buildStatusBadges(): Array<{ label: string; level: 'warning' | 'alert' }> {
@@ -1890,17 +1959,9 @@ class BMWStatusCard extends LitElement {
       `;
     }
 
-    const badges = this._buildStatusBadges();
     return html`
       <div class="card-wrapper">
         <vehicle-status-card></vehicle-status-card>
-        ${badges.length
-          ? html`<div class="status-overlay">
-              ${badges.map(
-                (badge) => html`<div class="status-badge ${badge.level}">${badge.label}</div>`
-              )}
-            </div>`
-          : null}
       </div>
     `;
   }
@@ -1965,7 +2026,6 @@ class BMWStatusCardEditor extends LitElement {
   }
 
   public setConfig(config: BMWStatusCardConfig): void {
-    const normalizedHaEntity = this._normalizeEntityId(config.image?.ai?.ha_entity_id);
     const normalizedProvider = config.image?.mode === 'ai'
       ? config.image?.ai?.provider || 'ha_ai_task'
       : config.image?.ai?.provider;
@@ -1975,7 +2035,7 @@ class BMWStatusCardEditor extends LitElement {
       image: config.image?.ai
         ? {
             ...config.image,
-            ai: { ...config.image.ai, ha_entity_id: normalizedHaEntity, provider: normalizedProvider }
+            ai: { ...config.image.ai, provider: normalizedProvider }
           }
         : config.image
     };
@@ -2166,8 +2226,7 @@ class BMWStatusCardEditor extends LitElement {
     const target = ev.currentTarget as any;
     const path = target?.dataset?.path;
     if (!path) return;
-    const rawValue = ev.detail?.value ?? target?.value;
-    const value = path === 'image.ai.ha_entity_id' ? this._normalizeEntityId(rawValue) : rawValue;
+    const value = ev.detail?.value ?? target?.value;
     this._setConfigValue(path, value);
   }
 
@@ -2187,7 +2246,8 @@ class BMWStatusCardEditor extends LitElement {
       const first = trimmed.split(',')[0].trim();
       return this._normalizeEntityId(first);
     }
-    return /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(trimmed) ? trimmed : undefined;
+    if (!trimmed.includes('.') || /\s/.test(trimmed)) return undefined;
+    return trimmed;
   }
 
   private _onToggleChanged(ev: Event): void {
@@ -2347,7 +2407,7 @@ class BMWStatusCardEditor extends LitElement {
     const ai = this._config.image?.ai || {};
     const aiProvider = ai.provider || 'ha_ai_task';
     const aiTaskOptions = (this._aiTaskEntities || []).filter((entityId) => entityId.startsWith('ai_task.'));
-    const aiTaskValue = ai.ha_entity_id || '';
+    const aiTaskValue = this._normalizeEntityId(ai.ha_entity_id) || '';
     const aiTaskOptionsWithValue = aiTaskValue && !aiTaskOptions.includes(aiTaskValue)
       ? [aiTaskValue, ...aiTaskOptions]
       : aiTaskOptions;

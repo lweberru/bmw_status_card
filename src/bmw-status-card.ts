@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.35';
+const VERSION = '0.1.36';
 
 type HassState = {
   entity_id: string;
@@ -694,19 +694,21 @@ class BMWStatusCard extends LitElement {
   private async _fetchHaAiTaskImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
     if (!this.hass) throw new Error('Home Assistant nicht verfügbar.');
 
+    const targetEntity = this._normalizeEntityId(ai.ha_entity_id);
     const serviceData: Record<string, any> = {
       task_name: this._vehicleInfo?.name || this._config?.vehicle_info?.name || 'BMW Status Card',
       instructions: prompt
     };
+    if (targetEntity) {
+      serviceData.entity_id = targetEntity;
+    }
 
     let response: any;
-    const targetEntity = this._normalizeEntityId(ai.ha_entity_id);
     try {
       response = await this.hass.callWS({
         type: 'call_service',
         domain: 'ai_task',
         service: 'generate_image',
-        ...(targetEntity ? { target: { entity_id: targetEntity } } : {}),
         service_data: serviceData,
         return_response: true
       });
@@ -1684,6 +1686,10 @@ class BMWStatusCard extends LitElement {
       const first = value.length ? String(value[0]).trim() : '';
       return this._normalizeEntityId(first);
     }
+    if (typeof value === 'object') {
+      const candidate = (value as any).entity_id ?? (value as any).entityId;
+      return this._normalizeEntityId(candidate as any);
+    }
     const trimmed = String(value).trim();
     if (!trimmed) return undefined;
     if (trimmed.includes(',')) {
@@ -1960,11 +1966,17 @@ class BMWStatusCardEditor extends LitElement {
 
   public setConfig(config: BMWStatusCardConfig): void {
     const normalizedHaEntity = this._normalizeEntityId(config.image?.ai?.ha_entity_id);
+    const normalizedProvider = config.image?.mode === 'ai'
+      ? config.image?.ai?.provider || 'ha_ai_task'
+      : config.image?.ai?.provider;
     this._config = {
       ...config,
       type: config.type || `custom:${CARD_NAME}`,
       image: config.image?.ai
-        ? { ...config.image, ai: { ...config.image.ai, ha_entity_id: normalizedHaEntity } }
+        ? {
+            ...config.image,
+            ai: { ...config.image.ai, ha_entity_id: normalizedHaEntity, provider: normalizedProvider }
+          }
         : config.image
     };
     this._maybeLoadGeminiModels();
@@ -2164,6 +2176,10 @@ class BMWStatusCardEditor extends LitElement {
     if (Array.isArray(value)) {
       const first = value.length ? String(value[0]).trim() : '';
       return this._normalizeEntityId(first);
+    }
+    if (typeof value === 'object') {
+      const candidate = (value as any).entity_id ?? (value as any).entityId;
+      return this._normalizeEntityId(candidate as any);
     }
     const trimmed = String(value).trim();
     if (!trimmed) return undefined;

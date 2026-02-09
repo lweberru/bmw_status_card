@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.32';
+const VERSION = '0.1.33';
 
 type HassState = {
   entity_id: string;
@@ -700,12 +700,13 @@ class BMWStatusCard extends LitElement {
     };
 
     let response: any;
+    const targetEntity = this._normalizeEntityId(ai.ha_entity_id);
     try {
       response = await this.hass.callWS({
         type: 'call_service',
         domain: 'ai_task',
         service: 'generate_image',
-        ...(ai.ha_entity_id ? { target: { entity_id: ai.ha_entity_id } } : {}),
+        ...(targetEntity ? { target: { entity_id: targetEntity } } : {}),
         service_data: serviceData,
         return_response: true
       });
@@ -1677,6 +1678,20 @@ class BMWStatusCard extends LitElement {
       .trim();
   }
 
+  private _normalizeEntityId(value?: string | string[] | null): string | undefined {
+    if (!value) return undefined;
+    if (Array.isArray(value)) {
+      return value.length ? String(value[0]).trim() || undefined : undefined;
+    }
+    const trimmed = String(value).trim();
+    if (!trimmed) return undefined;
+    if (trimmed.includes(',')) {
+      const first = trimmed.split(',')[0].trim();
+      return first || undefined;
+    }
+    return trimmed;
+  }
+
   private _findEntityByKeywords(entities: EntityInfo[], keywords: string[]): string | undefined {
     return this._findEntity(entities, [], keywords, new Set())?.entity_id;
   }
@@ -2290,6 +2305,10 @@ class BMWStatusCardEditor extends LitElement {
     const ai = this._config.image?.ai || {};
     const aiProvider = ai.provider || 'ha_ai_task';
     const aiTaskOptions = (this._aiTaskEntities || []).filter((entityId) => entityId.startsWith('ai_task.'));
+    const aiTaskValue = ai.ha_entity_id || '';
+    const aiTaskOptionsWithValue = aiTaskValue && !aiTaskOptions.includes(aiTaskValue)
+      ? [aiTaskValue, ...aiTaskOptions]
+      : aiTaskOptions;
     const onDemand = ai.generate_on_demand !== false;
     const uploadEnabled = ai.upload ?? (aiProvider === 'openai' || aiProvider === 'gemini' || aiProvider === 'ha_ai_task');
     try {
@@ -2417,15 +2436,15 @@ class BMWStatusCardEditor extends LitElement {
                         <select
                           data-path="image.ai.ha_entity_id"
                           @change=${(ev: Event) => this._onSelectChanged(ev as any)}
-                          .value=${ai.ha_entity_id || ''}
+                          .value=${aiTaskValue}
                         >
                           <option value="">(keine)</option>
-                          ${aiTaskOptions.map(
+                          ${aiTaskOptionsWithValue.map(
                             (entityId) => html`<option value=${entityId}>${entityId}</option>`
                           )}
                         </select>
                       </div>
-                      ${aiTaskOptions.length === 0
+                      ${aiTaskOptionsWithValue.length === 0
                         ? html`<div class="hint">Keine ai_task Entities gefunden.</div>`
                         : null}
                     `

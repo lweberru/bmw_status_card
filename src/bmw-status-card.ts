@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.39';
+const VERSION = '0.1.40';
 
 type HassState = {
   entity_id: string;
@@ -1972,7 +1972,7 @@ class BMWStatusCard extends LitElement {
       `{% if status in ['parking','parked','standing'] %}` +
       `{% for e in [${doorList}] %}` +
       `{% set s = states(e) | lower %}` +
-      `{% if s not in ['closed','geschlossen','secured','gesichert','locked','verriegelt','ok','aus'] %}` +
+      `{% if s not in ['closed','geschlossen','secured','gesichert','locked','verriegelt','ok','aus','off','false','no','0','inactive','not_open','unknown','unavailable','none','-'] %}` +
       `{% set ns.open = true %}{% endif %}` +
       `{% endfor %}{% endif %}`;
   }
@@ -2044,7 +2044,8 @@ class BMWStatusCard extends LitElement {
     const has48v = this._is48vEntity(batteryHealth) ||
       entities.some((entity) => this._is48vEntity(entity.entity_id) || this._is48vEntity(entity.name));
 
-    const electricSignal = Boolean(charging || electricRange || batteryCharge) ||
+    const chargeLooksHybrid = this._isHybridBatteryChargeEntity(batteryCharge);
+    const electricSignal = Boolean(charging || electricRange || (!chargeLooksHybrid && batteryCharge)) ||
       Boolean(
         this._findEntity(
           entities,
@@ -2077,6 +2078,23 @@ class BMWStatusCard extends LitElement {
   private _is48vEntity(value?: string): boolean {
     if (!value) return false;
     return this._normalizeText(value).includes('48v');
+  }
+
+  private _isHybridBatteryChargeEntity(value?: string): boolean {
+    if (!value) return false;
+    const text = this._normalizeText(value);
+    return (
+      text.includes('48v') ||
+      text.includes('12v') ||
+      text.includes('trip') ||
+      text.includes('end_of_trip') ||
+      text.includes('end of trip') ||
+      text.includes('bei ankunft') ||
+      text.includes('ankunft') ||
+      text.includes('arrival') ||
+      text.includes('trip_battery') ||
+      text.includes('charge level at end of trip')
+    );
   }
 
   private _buildPwfStatusIconTemplate(entityId: string): string {
@@ -2320,6 +2338,12 @@ class BMWStatusCardEditor extends LitElement {
   }
 
   public setConfig(config: BMWStatusCardConfig): void {
+    const aiEntity =
+      config.image?.ai?.ha_entity_id ||
+      (config.image?.ai as any)?.entity_id ||
+      (config.image?.ai as any)?.ai_task_entity ||
+      (config.image?.ai as any)?.entity ||
+      (config.image?.ai as any)?.task_entity;
     const normalizedProvider = config.image?.mode === 'ai'
       ? config.image?.ai?.provider || 'ha_ai_task'
       : config.image?.ai?.provider;
@@ -2329,7 +2353,7 @@ class BMWStatusCardEditor extends LitElement {
       image: config.image?.ai
         ? {
             ...config.image,
-            ai: { ...config.image.ai, provider: normalizedProvider }
+            ai: { ...config.image.ai, provider: normalizedProvider, ha_entity_id: aiEntity || config.image.ai.ha_entity_id }
           }
         : config.image
     };

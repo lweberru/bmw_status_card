@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.31';
+const VERSION = '0.1.32';
 
 type HassState = {
   entity_id: string;
@@ -2289,6 +2289,7 @@ class BMWStatusCardEditor extends LitElement {
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
     const aiProvider = ai.provider || 'ha_ai_task';
+    const aiTaskOptions = (this._aiTaskEntities || []).filter((entityId) => entityId.startsWith('ai_task.'));
     const onDemand = ai.generate_on_demand !== false;
     const uploadEnabled = ai.upload ?? (aiProvider === 'openai' || aiProvider === 'gemini' || aiProvider === 'ha_ai_task');
     try {
@@ -2411,15 +2412,22 @@ class BMWStatusCardEditor extends LitElement {
                 ${aiProvider === 'ha_ai_task'
                   ? html`
                       <div class="hint">Nutze Home Assistant ai_task.generate_image und erhalte Media-URLs.</div>
-                      <ha-entity-picker
-                        .hass=${this.hass}
-                        .value=${ai.ha_entity_id || ''}
-                        .includeEntities=${this._aiTaskEntities || []}
-                        data-path="image.ai.ha_entity_id"
-                        @value-changed=${(ev: CustomEvent) => this._onSelectChanged(ev as any)}
-                        label="ai_task Entity (optional)"
-                        allow-custom-entity
-                      ></ha-entity-picker>
+                      <div class="field">
+                        <label class="hint">ai_task Entity (optional)</label>
+                        <select
+                          data-path="image.ai.ha_entity_id"
+                          @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                          .value=${ai.ha_entity_id || ''}
+                        >
+                          <option value="">(keine)</option>
+                          ${aiTaskOptions.map(
+                            (entityId) => html`<option value=${entityId}>${entityId}</option>`
+                          )}
+                        </select>
+                      </div>
+                      ${aiTaskOptions.length === 0
+                        ? html`<div class="hint">Keine ai_task Entities gefunden.</div>`
+                        : null}
                     `
                   : null}
                 ${aiProvider === 'openai' || aiProvider === 'gemini' || aiProvider === 'ha_ai_task'

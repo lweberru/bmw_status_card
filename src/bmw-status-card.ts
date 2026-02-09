@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.38';
+const VERSION = '0.1.39';
 
 type HassState = {
   entity_id: string;
@@ -1199,6 +1199,36 @@ class BMWStatusCard extends LitElement {
       'vorheizen',
       'klima'
     ]);
+    const preconditioningState = this._findEntity(
+      entities,
+      ['sensor'],
+      ['preconditioning state', 'preconditioning activity', 'preconditioning status', 'standklima', 'vorklimatisierung'],
+      new Set()
+    )?.entity_id;
+    const preconditioningError = this._findEntity(
+      entities,
+      ['sensor'],
+      ['preconditioning error', 'preconditioning error reason', 'vorklimatisierung fehler', 'standklima fehler'],
+      new Set()
+    )?.entity_id;
+    const preconditioningRemaining = this._findEntity(
+      entities,
+      ['sensor'],
+      ['preconditioning remaining time', 'preconditioning remaining', 'standklima rest', 'vorklimatisierung rest'],
+      new Set()
+    )?.entity_id;
+    const preconditioningEngineUsed = this._findEntity(
+      entities,
+      ['binary_sensor', 'sensor'],
+      ['preconditioning engine used', 'remote engine running', 'engine used'],
+      new Set()
+    )?.entity_id;
+    const preconditioningEngineAllowed = this._findEntity(
+      entities,
+      ['binary_sensor', 'sensor'],
+      ['preconditioning engine use allowed', 'remote engine start allowed', 'engine use allowed'],
+      new Set()
+    )?.entity_id;
     const engine = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
       'engine',
       'ignition',
@@ -1241,6 +1271,17 @@ class BMWStatusCard extends LitElement {
       'arming'
     ]);
 
+    const electrification = this._detectElectrification(
+      entities,
+      batteryHealth,
+      batteryCharge,
+      charging,
+      electricRange,
+      fuel
+    );
+    const isElectric = electrification === 'bev' || electrification === 'phev';
+    const batteryHealthIs48v = this._is48vEntity(batteryHealth);
+
     const isIndicatorEntity = (entityId?: string): boolean => {
       if (!entityId) return false;
       const entity = entities.find((entry) => entry.entity_id === entityId);
@@ -1251,17 +1292,27 @@ class BMWStatusCard extends LitElement {
 
     const rowMainItems: any[] = [];
     if (lock && isIndicatorEntity(lock)) rowMainItems.push({ type: 'entity', entity: lock, icon: 'mdi:lock' });
-    if (charging && isIndicatorEntity(charging))
+    if (charging && isElectric && isIndicatorEntity(charging))
       rowMainItems.push({ type: 'entity', entity: charging, icon: 'mdi:ev-station' });
-    if (preconditioning && isIndicatorEntity(preconditioning))
-      rowMainItems.push({ type: 'entity', entity: preconditioning, icon: 'mdi:car-defrost-front' });
 
     const rowInfoItems: any[] = [];
     if (engine && isIndicatorEntity(engine)) rowInfoItems.push({ type: 'entity', entity: engine, icon: 'mdi:engine' });
-    if (motion && isIndicatorEntity(motion)) rowInfoItems.push({ type: 'entity', entity: motion, icon: 'mdi:car' });
+    if (motion && isIndicatorEntity(motion)) {
+      const motionItem: any = { type: 'entity', entity: motion, icon: 'mdi:car' };
+      if (pwfStatus && motion === pwfStatus) {
+        motionItem.icon_template = this._buildPwfStatusIconTemplate(motion);
+      }
+      rowInfoItems.push(motionItem);
+    }
     if (alarm && isIndicatorEntity(alarm)) rowInfoItems.push({ type: 'entity', entity: alarm, icon: 'mdi:alarm-light' });
-    if (alarmArming && isIndicatorEntity(alarmArming))
-      rowInfoItems.push({ type: 'entity', entity: alarmArming, icon: 'mdi:shield-lock' });
+    if (alarmArming && isIndicatorEntity(alarmArming)) {
+      rowInfoItems.push({
+        type: 'entity',
+        entity: alarmArming,
+        icon: 'mdi:shield-lock',
+        icon_template: this._buildAlarmArmingIconTemplate(alarmArming)
+      });
+    }
 
     const doorEntities = this._pickEntities(entities, used, ['binary_sensor', 'sensor', 'cover'], [
       'door',
@@ -1333,6 +1384,8 @@ class BMWStatusCard extends LitElement {
       'climate',
       'hvac',
       'preconditioning',
+      'standklima',
+      'vorklimatisierung',
       'defrost',
       'seat',
       'steering wheel',
@@ -1421,7 +1474,7 @@ class BMWStatusCard extends LitElement {
     }
 
     const range_info: any[] = [];
-    if (batteryCharge) {
+    if (batteryCharge && isElectric) {
       range_info.push({
         energy_level: { entity: batteryCharge },
         range_level: electricRange || totalRange || range ? { entity: electricRange || totalRange || range } : undefined,
@@ -1429,13 +1482,13 @@ class BMWStatusCard extends LitElement {
         charge_target_entity: chargeTarget || undefined
       });
     }
-    if (batteryHealth) {
+    if (batteryHealth && (!batteryHealthIs48v || isElectric)) {
       range_info.push({
         energy_level: { entity: batteryHealth, max_value: 100 },
         color_template: this._buildBatteryHealthColorTemplate(batteryHealth)
       });
     }
-    if (fuel) {
+    if (fuel && electrification !== 'bev') {
       range_info.push({
         energy_level: { entity: fuel },
         range_level: fuelRange || totalRange || range ? { entity: fuelRange || totalRange || range } : undefined,
@@ -1471,14 +1524,18 @@ class BMWStatusCard extends LitElement {
       items.push({ entity, name, icon });
     };
 
-    addItem(statusItems, batteryCharge, 'Batterie', 'mdi:battery');
-    addItem(statusItems, batteryHealth, 'Batteriegesundheit', 'mdi:battery-heart');
+    const batteryChargeLabel = isElectric ? 'Batterie' : '12V Batterie';
+    const batteryHealthLabel = batteryHealthIs48v ? '48V Batteriegesundheit' : 'Batteriegesundheit';
+    addItem(statusItems, batteryCharge, batteryChargeLabel, 'mdi:battery');
+    addItem(statusItems, batteryHealth, batteryHealthLabel, 'mdi:battery-heart');
     addItem(statusItems, fuel, 'Kraftstoff', 'mdi:gas-station');
     addItem(statusItems, electricRange || totalRange || range, 'Reichweite', 'mdi:map-marker-distance');
     addItem(statusItems, odometer, 'Kilometerstand', 'mdi:counter');
     addItem(statusItems, temperature, 'Temperatur', 'mdi:thermometer');
-    addItem(statusItems, chargingTime, 'Ladezeit', 'mdi:timer');
-    addItem(statusItems, chargingPower, 'Ladeleistung', 'mdi:flash');
+    if (isElectric) {
+      addItem(statusItems, chargingTime, 'Ladezeit', 'mdi:timer');
+      addItem(statusItems, chargingPower, 'Ladeleistung', 'mdi:flash');
+    }
     addItem(statusItems, motion, 'Fahrstatus', 'mdi:car');
     addItem(statusItems, alarmArming, 'Alarmanlage', 'mdi:shield-lock');
 
@@ -1511,11 +1568,16 @@ class BMWStatusCard extends LitElement {
     }
 
     if (doorEntities.length) {
+      const doorTemplates = this._buildDoorTemplates(doorEntities, motion);
       specialButtons.push({
         name: 'Öffnungen',
         icon: 'mdi:car-door',
         button_type: 'default',
         card_type: 'default',
+        notify: doorTemplates.notify,
+        notify_icon: doorTemplates.notify_icon,
+        notify_color: doorTemplates.notify_color,
+        color_template: doorTemplates.color,
         sub_card: {
           default_card: [
             {
@@ -1546,7 +1608,7 @@ class BMWStatusCard extends LitElement {
       (tireCard.entities || []).forEach((entity) => buttonExclusions.add(entity));
     }
 
-    if (chargingEntities.length) {
+    if (isElectric && chargingEntities.length) {
       specialButtons.push({
         name: 'Laden',
         icon: 'mdi:ev-station',
@@ -1565,11 +1627,22 @@ class BMWStatusCard extends LitElement {
     }
 
     if (climateEntities.length) {
+      const preconditioningTemplates = this._buildPreconditioningTemplates(
+        preconditioningState,
+        preconditioningError,
+        preconditioningRemaining,
+        preconditioningEngineUsed,
+        preconditioningEngineAllowed
+      );
       specialButtons.push({
         name: 'Klima',
         icon: 'mdi:car-defrost-front',
         button_type: 'default',
         card_type: 'default',
+        notify: preconditioningTemplates.notify,
+        notify_icon: preconditioningTemplates.notify_icon,
+        notify_color: preconditioningTemplates.notify_color,
+        color_template: preconditioningTemplates.color,
         sub_card: {
           default_card: [
             {
@@ -1862,16 +1935,166 @@ class BMWStatusCard extends LitElement {
   private _buildTirePressureTemplateBase(actuals: string[], targets: string[]): string | undefined {
     const { pairs, fallback } = this._buildTirePairs(actuals, targets);
     if (!pairs.length && !fallback.length) return undefined;
-    const pairsLiteral = pairs.map((pair) => `{ a: '${pair.a}', t: '${pair.t}' }`).join(', ');
+    const pairsLiteral = pairs.map((pair) => `{ 'a': '${pair.a}', 't': '${pair.t}' }`).join(', ');
     const fallbackLiteral = fallback.map((entityId) => `'${entityId}'`).join(', ');
     return `{% set pairs = [${pairsLiteral}] %}{% set fallback = [${fallbackLiteral}] %}{% set ns = namespace(state='ok') %}` +
-      `{% for p in pairs %}{% set av = states(p.a) | float(0) %}{% set tv = states(p.t) | float(0) %}` +
+      `{% for p in pairs %}{% set av = states(p['a']) | float(0) %}{% set tv = states(p['t']) | float(0) %}` +
       `{% if tv > 0 and av > 0 %}{% set warn = tv * 0.9 %}{% set err = tv * 0.8 %}` +
       `{% if av < err %}{% set ns.state = 'error' %}{% elif av < warn and ns.state != 'error' %}{% set ns.state = 'warn' %}{% endif %}` +
       `{% endif %}{% endfor %}` +
       `{% if ns.state == 'ok' %}{% for e in fallback %}{% set v = states(e) | float(0) %}` +
       `{% if v > 0 and v < 180 %}{% set ns.state = 'error' %}{% elif v > 0 and v < 200 and ns.state != 'error' %}{% set ns.state = 'warn' %}{% endif %}` +
       `{% endfor %}{% endif %}`;
+  }
+
+  private _buildDoorTemplates(doors: string[], statusEntity?: string): {
+    notify?: string;
+    color?: string;
+    notify_color?: string;
+    notify_icon?: string;
+  } {
+    const base = this._buildDoorTemplateBase(doors, statusEntity);
+    if (!base) return {};
+    return {
+      notify: `${base}{{ ns.open }}`,
+      color: `${base}{{ iif(ns.open, 'var(--warning-color)', 'var(--secondary-text-color)') }}`,
+      notify_color: `${base}{{ 'var(--warning-color)' }}`,
+      notify_icon: `${base}{{ 'mdi:car-door' }}`
+    };
+  }
+
+  private _buildDoorTemplateBase(doors: string[], statusEntity?: string): string | undefined {
+    if (!doors.length) return undefined;
+    const doorList = doors.map((entityId) => `'${entityId}'`).join(', ');
+    const status = statusEntity ? `'${statusEntity}'` : "''";
+    return `{% set ns = namespace(open=false) %}` +
+      `{% set status = states(${status}) | lower %}` +
+      `{% if status in ['parking','parked','standing'] %}` +
+      `{% for e in [${doorList}] %}` +
+      `{% set s = states(e) | lower %}` +
+      `{% if s not in ['closed','geschlossen','secured','gesichert','locked','verriegelt','ok','aus'] %}` +
+      `{% set ns.open = true %}{% endif %}` +
+      `{% endfor %}{% endif %}`;
+  }
+
+  private _buildPreconditioningTemplates(
+    stateEntity?: string,
+    errorEntity?: string,
+    remainingEntity?: string,
+    engineUsedEntity?: string,
+    engineAllowedEntity?: string
+  ): {
+    notify?: string;
+    color?: string;
+    notify_color?: string;
+    notify_icon?: string;
+  } {
+    const base = this._buildPreconditioningTemplateBase(
+      stateEntity,
+      errorEntity,
+      remainingEntity,
+      engineUsedEntity,
+      engineAllowedEntity
+    );
+    if (!base) return {};
+    return {
+      notify: `${base}{{ ns.active or ns.error }}`,
+      color: `${base}{{ iif(ns.error, 'var(--error-color)', iif(ns.active, 'var(--success-color)', 'var(--secondary-text-color)')) }}`,
+      notify_color: `${base}{{ iif(ns.error, 'var(--error-color)', 'var(--success-color)') }}`,
+      notify_icon: `${base}{{ iif(ns.error, 'mdi:alert-circle', 'mdi:car-defrost-front') }}`
+    };
+  }
+
+  private _buildPreconditioningTemplateBase(
+    stateEntity?: string,
+    errorEntity?: string,
+    remainingEntity?: string,
+    engineUsedEntity?: string,
+    engineAllowedEntity?: string
+  ): string | undefined {
+    if (!stateEntity && !errorEntity && !remainingEntity && !engineUsedEntity && !engineAllowedEntity) return undefined;
+    const state = stateEntity ? `'${stateEntity}'` : "''";
+    const error = errorEntity ? `'${errorEntity}'` : "''";
+    const remaining = remainingEntity ? `'${remainingEntity}'` : "''";
+    const engineUsed = engineUsedEntity ? `'${engineUsedEntity}'` : "''";
+    const engineAllowed = engineAllowedEntity ? `'${engineAllowedEntity}'` : "''";
+    return (
+      `{% set ns = namespace(active=false, error=false) %}` +
+      `{% set state = states(${state}) | lower %}` +
+      `{% set err = states(${error}) | lower %}` +
+      `{% set remaining = states(${remaining}) | float(0) %}` +
+      `{% set engine = states(${engineUsed}) | lower %}` +
+      `{% set allowed = states(${engineAllowed}) | lower %}` +
+      `{% if err not in ['','ok','invalid','unknown','none','-'] %}{% set ns.error = true %}{% endif %}` +
+      `{% if state in ['heating','cooling','ventilation','standby'] %}{% set ns.active = true %}{% endif %}` +
+      `{% if remaining > 0 %}{% set ns.active = true %}{% endif %}` +
+      `{% if engine in ['true','on','yes','1'] %}{% set ns.active = true %}{% endif %}` +
+      `{% if allowed in ['false','off','no','0'] and state in ['heating','cooling','ventilation'] %}{% set ns.error = true %}{% endif %}`
+    );
+  }
+
+  private _detectElectrification(
+    entities: EntityInfo[],
+    batteryHealth?: string,
+    batteryCharge?: string,
+    charging?: string,
+    electricRange?: string,
+    fuel?: string
+  ): 'bev' | 'phev' | 'mhev' | 'ice' {
+    const has48v = this._is48vEntity(batteryHealth) ||
+      entities.some((entity) => this._is48vEntity(entity.entity_id) || this._is48vEntity(entity.name));
+
+    const electricSignal = Boolean(charging || electricRange || batteryCharge) ||
+      Boolean(
+        this._findEntity(
+          entities,
+          ['sensor', 'binary_sensor'],
+          [
+            'electric range',
+            'ev range',
+            'charging',
+            'charge',
+            'charging port',
+            'traction battery',
+            'high voltage',
+            'hv battery',
+            'electric engine',
+            'state of energy'
+          ],
+          new Set()
+        )
+      );
+
+    const hasFuel = Boolean(fuel) || Boolean(
+      this._findEntity(entities, ['sensor'], ['fuel', 'tank', 'kraftstoff', 'tank level'], new Set())
+    );
+
+    if (electricSignal) return hasFuel ? 'phev' : 'bev';
+    if (has48v) return 'mhev';
+    return 'ice';
+  }
+
+  private _is48vEntity(value?: string): boolean {
+    if (!value) return false;
+    return this._normalizeText(value).includes('48v');
+  }
+
+  private _buildPwfStatusIconTemplate(entityId: string): string {
+    return (
+      `{% set s = states('${entityId}') | lower %}` +
+      `{{ iif('driving' in s or 'fahrt' in s, 'mdi:car-sports', ` +
+      `iif('parking' in s or 'parked' in s or 'parken' in s, 'mdi:parking', ` +
+      `iif('standing' in s or 'stand' in s, 'mdi:car-brake-hold', 'mdi:car'))) }}`
+    );
+  }
+
+  private _buildAlarmArmingIconTemplate(entityId: string): string {
+    return (
+      `{% set s = states('${entityId}') | lower %}` +
+      `{{ iif(s == 'unarmed', 'mdi:shield-off', ` +
+      `iif(s == 'doorsonly', 'mdi:car-door-lock', ` +
+      `iif(s == 'doorstiltcabin', 'mdi:shield-car', 'mdi:shield-lock'))) }}`
+    );
   }
 
   private _buildTirePairs(actuals: string[], targets: string[]): { pairs: Array<{ a: string; t: string }>; fallback: string[] } {

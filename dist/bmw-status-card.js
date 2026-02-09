@@ -419,5 +419,5 @@ const $=globalThis,E=t=>t,k=$.trustedTypes,A=k?k.createPolicy("lit-html",{create
                 <div class="hint">Optional: Bei Prompts wird {angle} ignoriert, Views sind dann optional.</div>
               `:null}
         </div>
-      `}catch(t){return this._setEditorError(t),V`<div class="error">${this._editorError}</div>`}}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",ut),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.27"});
+      `}catch(t){return this._setEditorError(t),V`<div class="error">${this._editorError}</div>`}}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",ut),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.28"});
 //# sourceMappingURL=bmw-status-card.js.map

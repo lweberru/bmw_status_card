@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.26';
+const VERSION = '0.1.27';
 
 type HassState = {
   entity_id: string;
@@ -502,16 +502,16 @@ class BMWStatusCard extends LitElement {
       }
     }
 
-    if (images.length) {
+    if (images.length && uploadEnabled) {
+      images = await this._uploadImagesIfNeeded(images, ai);
+    }
+
+    if (images.length && images.every((image) => this._isCacheableImageUrl(image))) {
       try {
         localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), images }));
       } catch (_) {
         // ignore cache errors
       }
-    }
-
-    if (images.length && uploadEnabled) {
-      images = await this._uploadImagesIfNeeded(images, ai);
     }
 
     return images;
@@ -696,7 +696,6 @@ class BMWStatusCard extends LitElement {
       task_name: this._vehicleInfo?.name || this._config?.vehicle_info?.name || 'BMW Status Card',
       instructions: prompt
     };
-    if (ai.ha_entity_id) serviceData.entity_id = ai.ha_entity_id;
 
     let response: any;
     try {
@@ -718,6 +717,8 @@ class BMWStatusCard extends LitElement {
 
   private async _uploadImagesIfNeeded(images: string[], ai: ImageAiConfig): Promise<string[]> {
     if (!this.hass) return images;
+
+    const provider = ai.provider || 'ha_ai_task';
 
     const uploadPath = this._normalizeUploadPath(ai.upload_path);
     const results: string[] = [];
@@ -741,10 +742,16 @@ class BMWStatusCard extends LitElement {
             dataBase64 = fetched.data;
             mimeType = fetched.mimeType;
           } else {
+            if (provider === 'ha_ai_task') {
+              continue;
+            }
             results.push(image);
             continue;
           }
         } else {
+          if (provider === 'ha_ai_task') {
+            continue;
+          }
           results.push(image);
           continue;
         }
@@ -768,9 +775,11 @@ class BMWStatusCard extends LitElement {
         });
         const payload = response?.response ?? response?.result ?? response;
         const localUrl = payload?.local_url || payload?.url || payload?.local_path;
-        results.push(localUrl || image);
+        results.push(this._normalizeLocalUploadUrl(localUrl) || image);
       } catch (_) {
-        results.push(image);
+        if (provider !== 'ha_ai_task') {
+          results.push(image);
+        }
       }
     }
 
@@ -780,6 +789,17 @@ class BMWStatusCard extends LitElement {
   private _normalizeUploadPath(rawPath?: string): string {
     const normalized = (rawPath || 'www/upload_file').replace(/^\/+/, '').replace(/\/+$/, '');
     return normalized.startsWith('www/') ? normalized : `www/${normalized}`;
+  }
+
+  private _normalizeLocalUploadUrl(value?: string): string | undefined {
+    if (!value) return undefined;
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith('/local/')) return trimmed;
+    if (trimmed.startsWith('local/')) return `/${trimmed}`;
+    if (trimmed.startsWith('www/')) return `/local/${trimmed.replace(/^www\//, '')}`;
+    if (trimmed.includes('/www/')) return `/local/${trimmed.split('/www/')[1]}`;
+    return trimmed;
   }
 
   private _parseDataUrl(value: string): { data: string; mimeType?: string } | null {
@@ -822,6 +842,13 @@ class BMWStatusCard extends LitElement {
     return value.startsWith('http://') || value.startsWith('https://');
   }
 
+  private _isCacheableImageUrl(value: string): boolean {
+    const normalized = value.toLowerCase();
+    if (normalized.includes('/ai_task/')) return false;
+    if (normalized.includes('authsig=')) return false;
+    return true;
+  }
+
   private async _extractHaAiTaskUrls(payload: any): Promise<string[]> {
     if (!payload) return [];
     const candidates = payload?.images || payload?.data || payload?.results || payload?.result || payload;
@@ -831,7 +858,7 @@ class BMWStatusCard extends LitElement {
     for (const item of items) {
       if (!item) continue;
       if (typeof item === 'string') {
-        urls.push(item);
+        urls.push(this._normalizeHaAiTaskUrl(item));
         continue;
       }
       const url =
@@ -840,16 +867,18 @@ class BMWStatusCard extends LitElement {
         item.media_url ||
         item.content_url ||
         item.media?.url ||
-        item.image?.url;
+        item.image?.url ||
+        item.local_url ||
+        item.local_path;
       if (url) {
-        urls.push(url);
+        urls.push(this._normalizeHaAiTaskUrl(String(url)));
         continue;
       }
       const mediaId = item.media_id || item.media_content_id || item.content_id || item.media;
       if (mediaId) {
         const resolved = await this._resolveMediaSourceUrl(String(mediaId));
         if (resolved) {
-          urls.push(resolved);
+          urls.push(this._normalizeHaAiTaskUrl(resolved));
         } else {
           urls.push(`/api/media/${mediaId}`);
         }
@@ -857,6 +886,16 @@ class BMWStatusCard extends LitElement {
     }
 
     return urls;
+  }
+
+  private _normalizeHaAiTaskUrl(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (trimmed.startsWith('/api/ai_task/')) return trimmed;
+    if (trimmed.startsWith('/ai_task/')) return `/api${trimmed}`;
+    if (trimmed.startsWith('ai_task/')) return `/api/${trimmed}`;
+    return trimmed;
   }
 
   private async _resolveMediaSourceUrl(mediaId: string): Promise<string | undefined> {
@@ -1104,28 +1143,25 @@ class BMWStatusCard extends LitElement {
       'alarmsystem'
     ]);
 
+    const isIndicatorEntity = (entityId?: string): boolean => {
+      if (!entityId) return false;
+      const entity = entities.find((entry) => entry.entity_id === entityId);
+      if (!entity) return true;
+      if (entity.domain !== 'sensor') return true;
+      return !this._isNumericState(entity.state);
+    };
+
     const rowMainItems: any[] = [];
-    if (lock) rowMainItems.push({ type: 'entity', entity: lock, icon: 'mdi:lock' });
-    if (charging) rowMainItems.push({ type: 'entity', entity: charging, icon: 'mdi:ev-station' });
-    if (battery) rowMainItems.push({ type: 'entity', entity: battery, icon: 'mdi:battery' });
-    if (fuel) rowMainItems.push({ type: 'entity', entity: fuel, icon: 'mdi:gas-station' });
-    if (preconditioning) rowMainItems.push({ type: 'entity', entity: preconditioning, icon: 'mdi:car-defrost-front' });
+    if (lock && isIndicatorEntity(lock)) rowMainItems.push({ type: 'entity', entity: lock, icon: 'mdi:lock' });
+    if (charging && isIndicatorEntity(charging))
+      rowMainItems.push({ type: 'entity', entity: charging, icon: 'mdi:ev-station' });
+    if (preconditioning && isIndicatorEntity(preconditioning))
+      rowMainItems.push({ type: 'entity', entity: preconditioning, icon: 'mdi:car-defrost-front' });
 
     const rowInfoItems: any[] = [];
-    if (electricRange || totalRange || range) {
-      rowInfoItems.push({
-        type: 'entity',
-        entity: electricRange || totalRange || range,
-        icon: 'mdi:map-marker-distance'
-      });
-    }
-    if (odometer) rowInfoItems.push({ type: 'entity', entity: odometer, icon: 'mdi:counter' });
-    if (temperature) rowInfoItems.push({ type: 'entity', entity: temperature, icon: 'mdi:thermometer' });
-    if (chargingPower) rowInfoItems.push({ type: 'entity', entity: chargingPower, icon: 'mdi:flash' });
-    if (chargingTime) rowInfoItems.push({ type: 'entity', entity: chargingTime, icon: 'mdi:timer' });
-    if (engine) rowInfoItems.push({ type: 'entity', entity: engine, icon: 'mdi:engine' });
-    if (motion) rowInfoItems.push({ type: 'entity', entity: motion, icon: 'mdi:car' });
-    if (alarm) rowInfoItems.push({ type: 'entity', entity: alarm, icon: 'mdi:alarm-light' });
+    if (engine && isIndicatorEntity(engine)) rowInfoItems.push({ type: 'entity', entity: engine, icon: 'mdi:engine' });
+    if (motion && isIndicatorEntity(motion)) rowInfoItems.push({ type: 'entity', entity: motion, icon: 'mdi:car' });
+    if (alarm && isIndicatorEntity(alarm)) rowInfoItems.push({ type: 'entity', entity: alarm, icon: 'mdi:alarm-light' });
 
     const doorEntities = this._pickEntities(entities, used, ['binary_sensor', 'sensor', 'cover'], [
       'door',
@@ -1182,7 +1218,6 @@ class BMWStatusCard extends LitElement {
     ]);
     const tireTargetEntities = tireEntities.filter((entity) => this._isTireTargetEntity(entity));
     const tireActualEntities = tireEntities.filter((entity) => !this._isTireTargetEntity(entity));
-    const doorSummaryEntities = doorEntities.filter((entity) => this._isDoorSummaryEntity(entity));
     const lightEntities = this._pickEntities(entities, used, ['binary_sensor', 'sensor', 'switch'], [
       'light',
       'lights',
@@ -1270,60 +1305,15 @@ class BMWStatusCard extends LitElement {
     if (rowInfoItems.length) {
       indicator_rows.push({ row_items: rowInfoItems, alignment: 'center', no_wrap: true });
     }
-    if (tireActualEntities.length) {
-      indicator_rows.push({
-        row_items: tireActualEntities.map((entity) => ({ type: 'entity', entity })),
-        alignment: 'center',
-        no_wrap: true
-      });
-    }
-    if (doorSummaryEntities.length) {
-      indicator_rows.push({
-        row_items: doorSummaryEntities.map((entity) => ({ type: 'entity', entity })),
-        alignment: 'center',
-        no_wrap: true
-      });
-    }
 
     const extraGroups: any[] = [];
-    if (chargingEntities.length) {
-      extraGroups.push({
-        type: 'group',
-        name: 'Laden',
-        icon: 'mdi:ev-station',
-        items: chargingEntities.map((entity) => ({ type: 'entity', entity }))
-      });
-    }
-    if (climateEntities.length) {
-      extraGroups.push({
-        type: 'group',
-        name: 'Klima',
-        icon: 'mdi:car-defrost-front',
-        items: climateEntities.map((entity) => ({ type: 'entity', entity }))
-      });
-    }
-    if (lightEntities.length) {
+    const lightIndicatorEntities = lightEntities.filter((entity) => isIndicatorEntity(entity));
+    if (lightIndicatorEntities.length) {
       extraGroups.push({
         type: 'group',
         name: 'Licht',
         icon: 'mdi:car-light-high',
-        items: lightEntities.map((entity) => ({ type: 'entity', entity }))
-      });
-    }
-    if (serviceEntities.length) {
-      extraGroups.push({
-        type: 'group',
-        name: 'Service',
-        icon: 'mdi:wrench',
-        items: serviceEntities.map((entity) => ({ type: 'entity', entity }))
-      });
-    }
-    if (navigationEntities.length) {
-      extraGroups.push({
-        type: 'group',
-        name: 'Navigation',
-        icon: 'mdi:navigation',
-        items: navigationEntities.map((entity) => ({ type: 'entity', entity }))
+        items: lightIndicatorEntities.map((entity) => ({ type: 'entity', entity }))
       });
     }
     if (extraGroups.length) {
@@ -1656,6 +1646,14 @@ class BMWStatusCard extends LitElement {
 
   private _findEntityByKeywords(entities: EntityInfo[], keywords: string[]): string | undefined {
     return this._findEntity(entities, [], keywords, new Set())?.entity_id;
+  }
+
+  private _isNumericState(value: unknown): boolean {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'number') return !Number.isNaN(value);
+    const normalized = String(value).trim().replace(',', '.');
+    if (!normalized) return false;
+    return !Number.isNaN(Number(normalized));
   }
 
   private _buildTireCardConfig(entities: EntityInfo[]): { tire_card: any; entities: string[] } | undefined {

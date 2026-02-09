@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.30';
+const VERSION = '0.1.31';
 
 type HassState = {
   entity_id: string;
@@ -705,6 +705,7 @@ class BMWStatusCard extends LitElement {
         type: 'call_service',
         domain: 'ai_task',
         service: 'generate_image',
+        ...(ai.ha_entity_id ? { target: { entity_id: ai.ha_entity_id } } : {}),
         service_data: serviceData,
         return_response: true
       });

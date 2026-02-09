@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.41';
+const VERSION = '0.1.42';
 
 type HassState = {
   entity_id: string;
@@ -2393,6 +2393,7 @@ class BMWStatusCardEditor extends LitElement {
       image: config.image?.ai
         ? {
             ...config.image,
+            mode: config.image.mode || 'ai',
             ai: { ...config.image.ai, provider: normalizedProvider, ha_entity_id: aiEntity || config.image.ai.ha_entity_id }
           }
         : config.image
@@ -2765,7 +2766,16 @@ class BMWStatusCardEditor extends LitElement {
     const ai = this._config.image?.ai || {};
     const aiProvider = ai.provider || 'ha_ai_task';
     const aiTaskOptions = (this._aiTaskEntities || []).filter((entityId) => entityId.startsWith('ai_task.'));
-    const aiTaskValue = this._normalizeEntityId(ai.ha_entity_id) || '';
+    const aiTaskRaw =
+      ai.ha_entity_id ||
+      (ai as any).entity_id ||
+      (ai as any).ai_task_entity ||
+      (ai as any).entity ||
+      (ai as any).task_entity;
+    const aiTaskValue =
+      this._normalizeEntityId(aiTaskRaw) ||
+      (typeof aiTaskRaw === 'string' ? aiTaskRaw.trim() : '') ||
+      '';
     const aiTaskOptionsWithValue = aiTaskValue && !aiTaskOptions.includes(aiTaskValue)
       ? [aiTaskValue, ...aiTaskOptions]
       : aiTaskOptions;
@@ -2893,16 +2903,14 @@ class BMWStatusCardEditor extends LitElement {
                       <div class="hint">Nutze Home Assistant ai_task.generate_image und erhalte Media-URLs.</div>
                       <div class="field">
                         <label class="hint">ai_task Entity (optional)</label>
-                        <select
-                          data-path="image.ai.ha_entity_id"
-                          @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                        <ha-entity-picker
+                          .hass=${this.hass}
                           .value=${aiTaskValue}
-                        >
-                          <option value="">(keine)</option>
-                          ${aiTaskOptionsWithValue.map(
-                            (entityId) => html`<option value=${entityId}>${entityId}</option>`
-                          )}
-                        </select>
+                          .includeEntities=${aiTaskOptions}
+                          data-path="image.ai.ha_entity_id"
+                          @value-changed=${this._onSelectChanged}
+                          allow-custom-entity
+                        ></ha-entity-picker>
                       </div>
                       ${aiTaskOptionsWithValue.length === 0
                         ? html`<div class="hint">Keine ai_task Entities gefunden.</div>`

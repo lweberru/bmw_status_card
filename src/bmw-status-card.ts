@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.34';
+const VERSION = '0.1.35';
 
 type HassState = {
   entity_id: string;
@@ -1959,7 +1959,14 @@ class BMWStatusCardEditor extends LitElement {
   }
 
   public setConfig(config: BMWStatusCardConfig): void {
-    this._config = { ...config, type: config.type || `custom:${CARD_NAME}` };
+    const normalizedHaEntity = this._normalizeEntityId(config.image?.ai?.ha_entity_id);
+    this._config = {
+      ...config,
+      type: config.type || `custom:${CARD_NAME}`,
+      image: config.image?.ai
+        ? { ...config.image, ai: { ...config.image.ai, ha_entity_id: normalizedHaEntity } }
+        : config.image
+    };
     this._maybeLoadGeminiModels();
     this._maybeLoadOpenAiModels();
   }
@@ -1976,9 +1983,11 @@ class BMWStatusCardEditor extends LitElement {
         .filter((entry) => entry.platform === 'cardata')
         .map((entry) => entry.entity_id)
         .sort();
-      const aiTaskEntities = Object.keys(this.hass.states || {})
-        .filter((entityId) => entityId.includes('ai_task'))
-        .sort();
+      const registryAiTask = entries
+        .filter((entry) => entry.entity_id.includes('ai_task'))
+        .map((entry) => entry.entity_id);
+      const stateAiTask = Object.keys(this.hass.states || {}).filter((entityId) => entityId.includes('ai_task'));
+      const aiTaskEntities = Array.from(new Set([...registryAiTask, ...stateAiTask])).sort();
       this._bmwHomeEntities = homeEntities;
       this._bmwCardataEntities = cardataEntities;
       this._aiTaskEntities = aiTaskEntities;
@@ -2145,8 +2154,24 @@ class BMWStatusCardEditor extends LitElement {
     const target = ev.currentTarget as any;
     const path = target?.dataset?.path;
     if (!path) return;
-    const value = ev.detail?.value ?? target?.value;
+    const rawValue = ev.detail?.value ?? target?.value;
+    const value = path === 'image.ai.ha_entity_id' ? this._normalizeEntityId(rawValue) : rawValue;
     this._setConfigValue(path, value);
+  }
+
+  private _normalizeEntityId(value?: string | string[] | null): string | undefined {
+    if (!value) return undefined;
+    if (Array.isArray(value)) {
+      const first = value.length ? String(value[0]).trim() : '';
+      return this._normalizeEntityId(first);
+    }
+    const trimmed = String(value).trim();
+    if (!trimmed) return undefined;
+    if (trimmed.includes(',')) {
+      const first = trimmed.split(',')[0].trim();
+      return this._normalizeEntityId(first);
+    }
+    return /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(trimmed) ? trimmed : undefined;
   }
 
   private _onToggleChanged(ev: Event): void {

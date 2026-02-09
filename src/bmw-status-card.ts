@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.33';
+const VERSION = '0.1.34';
 
 type HassState = {
   entity_id: string;
@@ -1681,15 +1681,16 @@ class BMWStatusCard extends LitElement {
   private _normalizeEntityId(value?: string | string[] | null): string | undefined {
     if (!value) return undefined;
     if (Array.isArray(value)) {
-      return value.length ? String(value[0]).trim() || undefined : undefined;
+      const first = value.length ? String(value[0]).trim() : '';
+      return this._normalizeEntityId(first);
     }
     const trimmed = String(value).trim();
     if (!trimmed) return undefined;
     if (trimmed.includes(',')) {
       const first = trimmed.split(',')[0].trim();
-      return first || undefined;
+      return this._normalizeEntityId(first);
     }
-    return trimmed;
+    return /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(trimmed) ? trimmed : undefined;
   }
 
   private _findEntityByKeywords(entities: EntityInfo[], keywords: string[]): string | undefined {
@@ -1976,7 +1977,7 @@ class BMWStatusCardEditor extends LitElement {
         .map((entry) => entry.entity_id)
         .sort();
       const aiTaskEntities = Object.keys(this.hass.states || {})
-        .filter((entityId) => entityId.startsWith('ai_task.'))
+        .filter((entityId) => entityId.includes('ai_task'))
         .sort();
       this._bmwHomeEntities = homeEntities;
       this._bmwCardataEntities = cardataEntities;

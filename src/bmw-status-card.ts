@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.37';
+const VERSION = '0.1.38';
 
 type HassState = {
   entity_id: string;
@@ -478,16 +478,22 @@ class BMWStatusCard extends LitElement {
     const countPerPrompt = ai.count ?? 1;
     const maxImages = ai.max_images ?? 8;
     const onDemand = ai.generate_on_demand !== false;
+    const statusLabel = this._getVehicleStatusLabel() || 'unknown';
     const uploadEnabledBase = ai.upload ?? (provider === 'openai' || provider === 'gemini' || provider === 'ha_ai_task');
     const uploadEnabled = provider === 'ha_ai_task' ? true : uploadEnabledBase;
 
     try {
       const cachedRaw = localStorage.getItem(cacheKey);
       if (cachedRaw) {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; images: string[] };
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; images: string[]; status?: string };
         const ageHours = (Date.now() - cached.timestamp) / 36e5;
         const hasEphemeral = cached.images?.some((image) => !this._isCacheableImageUrl(image));
-        if (cached.images?.length && ageHours <= cacheHours && !hasEphemeral) {
+        if (
+          cached.images?.length &&
+          ageHours <= cacheHours &&
+          !hasEphemeral &&
+          cached.status === statusLabel
+        ) {
           return cached.images;
         }
       }
@@ -524,7 +530,7 @@ class BMWStatusCard extends LitElement {
 
     if (images.length && images.every((image) => this._isCacheableImageUrl(image))) {
       try {
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), images }));
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), images, status: statusLabel }));
       } catch (_) {
         // ignore cache errors
       }
@@ -1050,9 +1056,9 @@ class BMWStatusCard extends LitElement {
     ]);
     const charging = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
       'charging',
-      'lock', 
-      'locked', 
-      'door lock', 
+      'charge',
+      'plugged',
+      'plug',
       'charging port',
       'connector',
       'port',
@@ -1062,16 +1068,31 @@ class BMWStatusCard extends LitElement {
       'anschluss',
       'ladeklappe'
     ]);
-    const battery = this._pickEntity(entities, used, ['sensor'], [
-      'battery',
-      'batterie',
-      'soc',
+    const batteryHealth = this._pickEntity(entities, used, ['sensor'], [
+      'battery health',
+      'state of health',
+      'soh',
+      'health_state',
+      'battery_health',
+      'battery health state',
+      'health state',
+      'health_state_48v',
+      '48v health',
+      '48v battery health',
+      'battery_health_state_48v'
+    ]);
+    const batteryCharge = this._pickEntity(entities, used, ['sensor'], [
       'state_of_charge',
       'state of charge',
+      'soc',
       'state_of_energy',
       'soe',
       'ladezustand',
       'batteriestand',
+      'charge level',
+      'charge_level',
+      'charge level at end of trip',
+      'trip_battery_charge_level',
       'soc bei ankunft',
       'state_of_charge_predicted',
       'state_of_charge_predicted_on_integration_side'
@@ -1400,12 +1421,18 @@ class BMWStatusCard extends LitElement {
     }
 
     const range_info: any[] = [];
-    if (battery) {
+    if (batteryCharge) {
       range_info.push({
-        energy_level: { entity: battery },
+        energy_level: { entity: batteryCharge },
         range_level: electricRange || totalRange || range ? { entity: electricRange || totalRange || range } : undefined,
         charging_entity: charging || undefined,
         charge_target_entity: chargeTarget || undefined
+      });
+    }
+    if (batteryHealth) {
+      range_info.push({
+        energy_level: { entity: batteryHealth, max_value: 100 },
+        color_template: this._buildBatteryHealthColorTemplate(batteryHealth)
       });
     }
     if (fuel) {
@@ -1444,7 +1471,8 @@ class BMWStatusCard extends LitElement {
       items.push({ entity, name, icon });
     };
 
-    addItem(statusItems, battery, 'Batterie', 'mdi:battery');
+    addItem(statusItems, batteryCharge, 'Batterie', 'mdi:battery');
+    addItem(statusItems, batteryHealth, 'Batteriegesundheit', 'mdi:battery-heart');
     addItem(statusItems, fuel, 'Kraftstoff', 'mdi:gas-station');
     addItem(statusItems, electricRange || totalRange || range, 'Reichweite', 'mdi:map-marker-distance');
     addItem(statusItems, odometer, 'Kilometerstand', 'mdi:counter');
@@ -1501,17 +1529,16 @@ class BMWStatusCard extends LitElement {
     }
 
     if (tireCard?.tire_card) {
-      const tireNotifyTemplate = this._buildLowTireNotifyTemplate(tireActualEntities);
-      const tireColorTemplate = this._buildLowTireColorTemplate(tireActualEntities);
+      const tireTemplates = this._buildTirePressureTemplates(tireActualEntities, tireTargetEntities);
       specialButtons.push({
         name: 'Reifen',
         icon: 'mdi:car-tire-alert',
         button_type: 'default',
         card_type: 'tire',
-        notify: tireNotifyTemplate,
-        notify_icon: 'mdi:car-tire-alert',
-        notify_color: 'var(--error-color)',
-        color_template: tireColorTemplate,
+        notify: tireTemplates.notify,
+        notify_icon: tireTemplates.notify_icon,
+        notify_color: tireTemplates.notify_color,
+        color_template: tireTemplates.color,
         sub_card: {
           tire_card: tireCard.tire_card
         }
@@ -1816,20 +1843,64 @@ class BMWStatusCard extends LitElement {
     return state;
   }
 
-  private _buildLowTireNotifyTemplate(entities: string[]): string | undefined {
-    if (!entities.length) return undefined;
-    const list = entities.map((entityId) => `'${entityId}'`).join(', ');
-    return `{% set ns = namespace(low=false) %}{% for e in [${list}] %}{% set v = states(e) | float(0) %}{% if v > 0 and v < 200 %}{% set ns.low = true %}{% endif %}{% endfor %}{{ ns.low }}`;
+  private _buildTirePressureTemplates(actuals: string[], targets: string[]): {
+    notify?: string;
+    color?: string;
+    notify_color?: string;
+    notify_icon?: string;
+  } {
+    const base = this._buildTirePressureTemplateBase(actuals, targets);
+    if (!base) return {};
+    return {
+      notify: `${base}{{ ns.state in ['warn','error'] }}`,
+      color: `${base}{{ iif(ns.state == 'error', 'var(--error-color)', iif(ns.state == 'warn', 'var(--warning-color)', 'var(--secondary-text-color)')) }}`,
+      notify_color: `${base}{{ iif(ns.state == 'error', 'var(--error-color)', 'var(--warning-color)') }}`,
+      notify_icon: `${base}{{ iif(ns.state == 'error', 'mdi:alert', 'mdi:alert-circle') }}`
+    };
   }
 
-  private _buildLowTireColorTemplate(entities: string[]): string | undefined {
-    if (!entities.length) return undefined;
-    const list = entities.map((entityId) => `'${entityId}'`).join(', ');
-    return `{% set ns = namespace(low=false) %}{% for e in [${list}] %}{% set v = states(e) | float(0) %}{% if v > 0 and v < 200 %}{% set ns.low = true %}{% endif %}{% endfor %}{{ iif(ns.low, 'var(--error-color)', 'var(--secondary-text-color)') }}`;
+  private _buildTirePressureTemplateBase(actuals: string[], targets: string[]): string | undefined {
+    const { pairs, fallback } = this._buildTirePairs(actuals, targets);
+    if (!pairs.length && !fallback.length) return undefined;
+    const pairsLiteral = pairs.map((pair) => `{ a: '${pair.a}', t: '${pair.t}' }`).join(', ');
+    const fallbackLiteral = fallback.map((entityId) => `'${entityId}'`).join(', ');
+    return `{% set pairs = [${pairsLiteral}] %}{% set fallback = [${fallbackLiteral}] %}{% set ns = namespace(state='ok') %}` +
+      `{% for p in pairs %}{% set av = states(p.a) | float(0) %}{% set tv = states(p.t) | float(0) %}` +
+      `{% if tv > 0 and av > 0 %}{% set warn = tv * 0.9 %}{% set err = tv * 0.8 %}` +
+      `{% if av < err %}{% set ns.state = 'error' %}{% elif av < warn and ns.state != 'error' %}{% set ns.state = 'warn' %}{% endif %}` +
+      `{% endif %}{% endfor %}` +
+      `{% if ns.state == 'ok' %}{% for e in fallback %}{% set v = states(e) | float(0) %}` +
+      `{% if v > 0 and v < 180 %}{% set ns.state = 'error' %}{% elif v > 0 and v < 200 and ns.state != 'error' %}{% set ns.state = 'warn' %}{% endif %}` +
+      `{% endfor %}{% endif %}`;
+  }
+
+  private _buildTirePairs(actuals: string[], targets: string[]): { pairs: Array<{ a: string; t: string }>; fallback: string[] } {
+    const targetByKey = new Map<string, string>();
+    targets.forEach((entityId) => {
+      const key = this._tirePositionKey(entityId);
+      if (key) targetByKey.set(key, entityId);
+    });
+    const pairs: Array<{ a: string; t: string }> = [];
+    const fallback: string[] = [];
+    actuals.forEach((entityId) => {
+      const key = this._tirePositionKey(entityId);
+      if (!key) return;
+      const target = targetByKey.get(key);
+      if (target) {
+        pairs.push({ a: entityId, t: target });
+      } else {
+        fallback.push(entityId);
+      }
+    });
+    return { pairs, fallback };
   }
 
   private _buildLowFuelColorTemplate(entityId: string): string {
     return `{% set v = states('${entityId}') | float(0) %}{{ iif(v > 0 and v < 10, 'var(--error-color)', 'var(--primary-color)') }}`;
+  }
+
+  private _buildBatteryHealthColorTemplate(entityId: string): string {
+    return `{% set v = states('${entityId}') | float(0) %}{{ iif(v < 80, 'var(--error-color)', iif(v < 90, 'var(--warning-color)', 'var(--success-color)')) }}`;
   }
 
   private _buildStatusBadges(): Array<{ label: string; level: 'warning' | 'alert' }> {

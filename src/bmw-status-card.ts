@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.40';
+const VERSION = '0.1.41';
 
 type HassState = {
   entity_id: string;
@@ -1081,7 +1081,7 @@ class BMWStatusCard extends LitElement {
       '48v battery health',
       'battery_health_state_48v'
     ]);
-    const batteryCharge = this._pickEntity(entities, used, ['sensor'], [
+    const batteryChargeKeywords = [
       'state_of_charge',
       'state of charge',
       'soc',
@@ -1096,7 +1096,13 @@ class BMWStatusCard extends LitElement {
       'soc bei ankunft',
       'state_of_charge_predicted',
       'state_of_charge_predicted_on_integration_side'
-    ]);
+    ];
+    let batteryCharge = this._pickEntity(entities, used, ['sensor'], batteryChargeKeywords);
+    const bestBatteryCharge = this._selectBestBatteryCharge(entities, batteryChargeKeywords);
+    if (bestBatteryCharge && (!batteryCharge || this._isEntityUnavailable(entities, batteryCharge))) {
+      batteryCharge = bestBatteryCharge;
+      used.add(bestBatteryCharge);
+    }
     const fuel = this._pickEntity(entities, used, ['sensor'], [
       'fuel',
       'tank',
@@ -1524,7 +1530,12 @@ class BMWStatusCard extends LitElement {
       items.push({ entity, name, icon });
     };
 
-    const batteryChargeLabel = isElectric ? 'Batterie' : '12V Batterie';
+    const hybridCharge = this._isHybridBatteryChargeEntity(batteryCharge);
+    const batteryChargeLabel = isElectric
+      ? 'Batterie'
+      : batteryHealthIs48v || hybridCharge
+        ? '48V Batterie (Ladung)'
+        : '12V Batterie';
     const batteryHealthLabel = batteryHealthIs48v ? '48V Batteriegesundheit' : 'Batteriegesundheit';
     addItem(statusItems, batteryCharge, batteryChargeLabel, 'mdi:battery');
     addItem(statusItems, batteryHealth, batteryHealthLabel, 'mdi:battery-heart');
@@ -2095,6 +2106,35 @@ class BMWStatusCard extends LitElement {
       text.includes('trip_battery') ||
       text.includes('charge level at end of trip')
     );
+  }
+
+  private _selectBestBatteryCharge(entities: EntityInfo[], keywords: string[]): string | undefined {
+    const candidates = this._findEntities(entities, ['sensor'], keywords, new Set());
+    if (!candidates.length) return undefined;
+    const scored = candidates.map((entity) => {
+      const text = this._normalizeText(`${entity.entity_id} ${entity.name} ${entity.device_class ?? ''}`);
+      let score = 0;
+      if (!this._isUnknownState(entity.state)) score += 5;
+      if (text.includes('trip') || text.includes('end_of_trip') || text.includes('end of trip')) score += 3;
+      if (text.includes('bei ankunft') || text.includes('ankunft') || text.includes('arrival')) score += 3;
+      if (text.includes('predicted')) score -= 2;
+      return { entity: entity.entity_id, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0]?.entity;
+  }
+
+  private _isEntityUnavailable(entities: EntityInfo[], entityId?: string): boolean {
+    if (!entityId) return true;
+    const entity = entities.find((entry) => entry.entity_id === entityId);
+    if (!entity) return true;
+    return this._isUnknownState(entity.state);
+  }
+
+  private _isUnknownState(state?: string): boolean {
+    if (!state) return true;
+    const normalized = this._normalizeText(state);
+    return ['unknown', 'unavailable', 'none', '-'].includes(normalized);
   }
 
   private _buildPwfStatusIconTemplate(entityId: string): string {

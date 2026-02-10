@@ -1524,12 +1524,12 @@ class BMWStatusCard extends LitElement {
     const range_info: any[] = [];
     if (batteryCharge && isElectric) {
       range_info.push({
-        title: 'Batterie',
-        description: 'Ladestand',
+        title: 'Batterie Ladestand',
         icon: 'mdi:battery',
-        tooltip: 'Batterie-Ladestand',
-        energy_level: { entity: batteryCharge },
-        range_level: electricRange || totalRange || range ? { entity: electricRange || totalRange || range } : undefined,
+        energy_level: { entity: batteryCharge, hide_icon: true },
+        range_level: electricRange || totalRange || range
+          ? { entity: electricRange || totalRange || range, hide_icon: true }
+          : undefined,
         charging_entity: charging || undefined,
         charge_target_entity: chargeTarget || undefined
       });
@@ -1537,31 +1537,27 @@ class BMWStatusCard extends LitElement {
     if (batteryHealth && (!batteryHealthIs48v || isElectric)) {
       range_info.push({
         title: batteryHealthLabel,
-        description: 'Gesundheit',
         icon: 'mdi:battery-heart',
-        tooltip: batteryHealthLabel,
-        energy_level: { entity: batteryHealth, max_value: 100 },
+        energy_level: { entity: batteryHealth, max_value: 100, hide_icon: true },
         color_template: this._buildBatteryHealthColorTemplate(batteryHealth)
       });
     }
     if (fuel && electrification !== 'bev') {
       range_info.push({
-        title: 'Kraftstoff',
-        description: 'Tankfüllstand',
+        title: 'Tankfüllstand',
         icon: 'mdi:gas-station',
-        tooltip: 'Kraftstoffstand',
-        energy_level: { entity: fuel },
-        range_level: fuelRange || totalRange || range ? { entity: fuelRange || totalRange || range } : undefined,
+        energy_level: { entity: fuel, hide_icon: true },
+        range_level: fuelRange || totalRange || range
+          ? { entity: fuelRange || totalRange || range, hide_icon: true }
+          : undefined,
         color_template: this._buildLowFuelColorTemplate(fuel)
       });
     }
     if (!range_info.length && range) {
       range_info.push({
         title: 'Reichweite',
-        description: 'Gesamt',
         icon: 'mdi:map-marker-distance',
-        tooltip: 'Reichweite',
-        energy_level: { entity: range }
+        energy_level: { entity: range, hide_icon: true }
       });
     }
 
@@ -1644,7 +1640,7 @@ class BMWStatusCard extends LitElement {
           default_card: [
             {
               title: 'Öffnungen',
-              items: doorEntities.map((entity) => ({ entity, name: this._getEntityLabel(entity, entities) }))
+              items: doorEntities.map((entity) => ({ entity, name: this._getDoorLabel(entity, entities) }))
             }
           ]
         }
@@ -1709,7 +1705,7 @@ class BMWStatusCard extends LitElement {
           default_card: [
             {
               title: 'Klima',
-              items: climateEntities.map((entity) => ({ entity, name: this._getEntityLabel(entity, entities) }))
+              items: climateEntities.map((entity) => ({ entity, name: this._getClimateLabel(entity, entities) }))
             }
           ]
         }
@@ -1898,8 +1894,72 @@ class BMWStatusCard extends LitElement {
   private _getEntityLabel(entityId: string, entities: EntityInfo[]): string {
     const entity = entities.find((entry) => entry.entity_id === entityId);
     const raw = entity?.name?.trim();
-    if (raw) return raw;
+    if (raw) return this._stripVehiclePrefix(raw);
     return this._beautifyEntityName(entityId);
+  }
+
+  private _stripVehiclePrefix(name: string): string {
+    const vehicleName = this._vehicleInfo?.name?.trim();
+    if (!vehicleName) return name;
+    const lowerName = name.toLowerCase();
+    const lowerVehicle = vehicleName.toLowerCase();
+    if (lowerName.startsWith(lowerVehicle)) {
+      return name.slice(vehicleName.length).trim();
+    }
+    return name;
+  }
+
+  private _getDoorLabel(entityId: string, entities: EntityInfo[]): string {
+    const entity = entities.find((entry) => entry.entity_id === entityId);
+    const source = this._stripVehiclePrefix(entity?.name?.trim() || entityId);
+    const text = this._normalizeText(source);
+
+    const doorSide = (prefix: string) => {
+      if (text.includes('front') && text.includes('driver')) return `${prefix} vorn links`;
+      if (text.includes('front') && text.includes('passenger')) return `${prefix} vorn rechts`;
+      if (text.includes('rear') && text.includes('driver')) return `${prefix} hinten links`;
+      if (text.includes('rear') && text.includes('passenger')) return `${prefix} hinten rechts`;
+      return undefined;
+    };
+
+    if (text.includes('doors overall')) return 'Türen gesamt';
+    if (text.includes('door state')) return doorSide('Tür') || 'Tür';
+    if (text.includes('window state')) return doorSide('Fenster') || 'Fenster';
+    if (text.includes('tailgate rear window')) return 'Heckscheibe';
+    if (text.includes('tailgate door') || text.includes('tailgate state')) return 'Heckklappe';
+    if (text.includes('trunk') || text.includes('boot')) return 'Kofferraum';
+    if (text.includes('hood') || text.includes('bonnet')) return 'Motorhaube';
+    if (text.includes('sunroof overall')) return 'Schiebedach gesamt';
+    if (text.includes('sunroof tilt')) return 'Schiebedach gekippt';
+    if (text.includes('sunroof')) return 'Schiebedach';
+
+    return this._stripVehiclePrefix(entity?.name?.trim() || this._beautifyEntityName(entityId));
+  }
+
+  private _getClimateLabel(entityId: string, entities: EntityInfo[]): string {
+    const entity = entities.find((entry) => entry.entity_id === entityId);
+    const source = this._stripVehiclePrefix(entity?.name?.trim() || entityId);
+    const text = this._normalizeText(source);
+
+    if (text.includes('climate timer')) {
+      const weekly = text.includes('weekly 1')
+        ? 'Klima-Timer Woche 1'
+        : text.includes('weekly 2')
+          ? 'Klima-Timer Woche 2'
+          : text.includes('next only')
+            ? 'Klima-Timer Nächster'
+            : 'Klima-Timer';
+      if (text.includes('hour')) return `${weekly} (Stunde)`;
+      if (text.includes('minute')) return `${weekly} (Minute)`;
+      if (text.includes('state')) return `${weekly} (Status)`;
+      return weekly;
+    }
+
+    if (text.includes('preconditioning engine used')) return 'Vorklimatisierung Motor verwendet';
+    if (text.includes('preconditioning error')) return 'Vorklimatisierung Fehler';
+    if (text.includes('preconditioning state')) return 'Vorklimatisierung Status';
+
+    return this._stripVehiclePrefix(entity?.name?.trim() || this._beautifyEntityName(entityId));
   }
 
   private _beautifyEntityName(entityId: string): string {

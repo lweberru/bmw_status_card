@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.50
+Version: 0.1.51
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -42,6 +42,7 @@ image:
 vehicle_info:
   color: "Blau"
   year: "2023"
+  license_plate: "M-AB1234"
 ```
 
 ### Gemini (Imagen) Beispiel

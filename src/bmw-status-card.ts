@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.50';
+const VERSION = '0.1.51';
 
 type HassState = {
   entity_id: string;
@@ -41,6 +41,7 @@ type VehicleInfo = {
   trim?: string;
   body?: string;
   name?: string;
+  license_plate?: string;
 };
 
 type ImageAiConfig = {
@@ -388,6 +389,9 @@ class BMWStatusCard extends LitElement {
         info.color = info.color || this._toNonEmptyString(basic.color);
         info.body = info.body || this._toNonEmptyString(basic.body_type);
         info.year = info.year || this._extractYear(basic.construction_date);
+        info.license_plate =
+          info.license_plate ||
+          this._toNonEmptyString(basic.license_plate || basic.licensePlate || basic.registration_number);
       }
 
       if (raw && typeof raw === 'object') {
@@ -402,6 +406,9 @@ class BMWStatusCard extends LitElement {
           info.color || this._toNonEmptyString(raw.colourDescription) || this._toNonEmptyString(raw.colourCodeRaw);
         info.body = info.body || this._toNonEmptyString(raw.bodyType);
         info.year = info.year || this._extractYear(raw.constructionDate);
+        info.license_plate =
+          info.license_plate ||
+          this._toNonEmptyString(raw.licensePlate || raw.license_plate || raw.registrationNumber);
       }
     }
 
@@ -455,7 +462,8 @@ class BMWStatusCard extends LitElement {
       color: configInfo.color || attrInfo.color || safeState(colorEntity),
       trim: configInfo.trim || attrInfo.trim || safeState(trimEntity),
       body: configInfo.body || attrInfo.body || safeState(bodyEntity),
-      name: configInfo.name || attrInfo.name || name
+      name: configInfo.name || attrInfo.name || name,
+      license_plate: configInfo.license_plate || attrInfo.license_plate
     };
   }
 
@@ -613,6 +621,7 @@ class BMWStatusCard extends LitElement {
     const rawTemplate = template || defaultAiTemplate;
     const statusLabel = this._getVehicleStatusLabel();
     const statusScene = this._getStatusScene(statusLabel);
+    const plate = vehicleInfo.license_plate;
     const tokens: Record<string, string> = {
       '{make}': vehicleInfo.make || 'BMW',
       '{model}': vehicleInfo.model || '',
@@ -622,7 +631,8 @@ class BMWStatusCard extends LitElement {
       '{trim}': vehicleInfo.trim || '',
       '{body}': vehicleInfo.body || '',
       '{angle}': view || '',
-      '{status}': statusScene || statusLabel || ''
+      '{status}': statusScene || statusLabel || '',
+      '{plate}': plate || ''
     };
 
     let prompt = rawTemplate;
@@ -637,6 +647,10 @@ class BMWStatusCard extends LitElement {
 
     if ((statusScene || statusLabel) && !rawTemplate.includes('{status}')) {
       prompt = statusScene ? `${prompt} ${statusScene}` : `${prompt} status: ${statusLabel}`;
+    }
+
+    if (plate && !rawTemplate.includes('{plate}')) {
+      prompt = `${prompt} license plate: ${plate}`;
     }
 
     return prompt.replace(/\s+/g, ' ').trim();
@@ -980,12 +994,13 @@ class BMWStatusCard extends LitElement {
     const make = info.make || 'bmw';
     const model = info.model || '';
     const series = info.series || '';
+    const plate = info.license_plate || '';
     const status = this._getVehicleStatusLabel() || 'unknown';
     const zone = this._deviceTrackerEntity
       ? this.hass?.states[this._deviceTrackerEntity]?.state || 'unknown'
       : 'unknown';
     const base = this._hash(cacheKey || JSON.stringify(info));
-    const slug = this._slugify([make, model, series, status, zone].filter(Boolean).join('-'));
+    const slug = this._slugify([make, model, series, plate, status, zone].filter(Boolean).join('-'));
     const safeSlug = slug.length ? slug : 'bmw-status-card';
     return `${safeSlug}-${base}`;
   }
@@ -3263,6 +3278,14 @@ class BMWStatusCardEditor extends LitElement {
               label="MapTiler API Key (optional)"
               .value=${this._config.maptiler_api_key || ''}
               data-path="maptiler_api_key"
+              @input=${this._onValueChanged}
+            ></ha-textfield>
+          </div>
+          <div class="row">
+            <ha-textfield
+              label="Kennzeichen (optional)"
+              .value=${this._config.vehicle_info?.license_plate || ''}
+              data-path="vehicle_info.license_plate"
               @input=${this._onValueChanged}
             ></ha-textfield>
           </div>

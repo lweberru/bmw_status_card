@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.48';
+const VERSION = '0.1.49';
 
 type HassState = {
   entity_id: string;
@@ -522,6 +522,13 @@ class BMWStatusCard extends LitElement {
     const uploadEnabledBase = ai.upload ?? (provider === 'openai' || provider === 'gemini' || provider === 'ha_ai_task');
     const uploadEnabled = provider === 'ha_ai_task' ? true : uploadEnabledBase;
 
+    if (uploadEnabled) {
+      const persistent = await this._tryGetPersistentCache(cacheKey, ai, maxImages, vehicleInfo);
+      if (persistent.length) {
+        return persistent;
+      }
+    }
+
     try {
       const cachedRaw = localStorage.getItem(cacheKey);
       if (cachedRaw) {
@@ -565,7 +572,7 @@ class BMWStatusCard extends LitElement {
     }
 
     if (images.length && uploadEnabled) {
-      images = await this._uploadImagesIfNeeded(images, ai);
+      images = await this._uploadImagesIfNeeded(images, ai, cacheKey, vehicleInfo);
     }
 
     if (images.length && images.every((image) => this._isCacheableImageUrl(image))) {
@@ -838,7 +845,12 @@ class BMWStatusCard extends LitElement {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async _uploadImagesIfNeeded(images: string[], ai: ImageAiConfig): Promise<string[]> {
+  private async _uploadImagesIfNeeded(
+    images: string[],
+    ai: ImageAiConfig,
+    cacheKey?: string,
+    vehicleInfo?: VehicleInfo
+  ): Promise<string[]> {
     if (!this.hass) return images;
 
     const provider = ai.provider || 'ha_ai_task';
@@ -846,7 +858,11 @@ class BMWStatusCard extends LitElement {
     const uploadPath = this._normalizeUploadPath(ai.upload_path);
     const results: string[] = [];
 
-    for (const image of images) {
+    const cacheBase = cacheKey ? this._hash(cacheKey) : undefined;
+    const filenamePrefix = cacheKey ? this._buildImageFilenamePrefix(vehicleInfo, cacheKey) : undefined;
+
+    for (let index = 0; index < images.length; index += 1) {
+      const image = images[index];
       let url: string | undefined;
       let dataBase64: string | undefined;
       let mimeType: string | undefined;
@@ -894,7 +910,9 @@ class BMWStatusCard extends LitElement {
 
       const extension = this._guessImageExtension(url, mimeType);
       const hashInput = url || dataBase64 || image;
-      const filename = `${this._hash(hashInput)}.${extension}`;
+      const filename = cacheBase
+        ? `${filenamePrefix}-${index + 1}.${extension}`
+        : `${this._hash(hashInput)}.${extension}`;
 
       try {
         const response = await this.hass.callWS({
@@ -919,6 +937,80 @@ class BMWStatusCard extends LitElement {
     }
 
     return results;
+  }
+
+  private async _tryGetPersistentCache(
+    cacheKey: string,
+    ai: ImageAiConfig,
+    maxImages: number,
+    vehicleInfo?: VehicleInfo
+  ): Promise<string[]> {
+    const uploadPath = this._normalizeUploadPath(ai.upload_path);
+    const prefix = this._buildImageFilenamePrefix(vehicleInfo, cacheKey);
+    const urls: string[] = [];
+    const extensions = ['png', 'jpg', 'jpeg', 'webp'];
+
+    for (let index = 0; index < maxImages; index += 1) {
+      let foundUrl: string | undefined;
+      for (const ext of extensions) {
+        const filename = `${prefix}-${index + 1}.${ext}`;
+        const url = this._buildLocalUploadUrl(uploadPath, filename);
+        if (await this._urlExists(url)) {
+          foundUrl = url;
+          break;
+        }
+      }
+      if (!foundUrl) break;
+      urls.push(foundUrl);
+    }
+
+    return urls;
+  }
+
+  private _buildLocalUploadUrl(uploadPath: string, filename: string): string {
+    const normalized = this._normalizeUploadPath(uploadPath);
+    const path = normalized.replace(/^www\//, '');
+    return `/local/${path}/${filename}`;
+  }
+
+  private _buildImageFilenamePrefix(vehicleInfo?: VehicleInfo, cacheKey?: string): string {
+    const info = vehicleInfo || this._vehicleInfo || {};
+    const make = info.make || 'bmw';
+    const model = info.model || '';
+    const series = info.series || '';
+    const status = this._getVehicleStatusLabel() || 'unknown';
+    const zone = this._deviceTrackerEntity
+      ? this.hass?.states[this._deviceTrackerEntity]?.state || 'unknown'
+      : 'unknown';
+    const base = this._hash(cacheKey || JSON.stringify(info));
+    const slug = this._slugify([make, model, series, status, zone].filter(Boolean).join('-'));
+    const safeSlug = slug.length ? slug : 'bmw-status-card';
+    return `${safeSlug}-${base}`;
+  }
+
+  private _slugify(value: string): string {
+    return value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60);
+  }
+
+  private async _urlExists(url: string): Promise<boolean> {
+    try {
+      const head = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+      if (head.ok) return true;
+    } catch (_) {
+      // ignore
+    }
+    try {
+      const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      return res.ok;
+    } catch (_) {
+      return false;
+    }
   }
 
   private _normalizeUploadPath(rawPath?: string): string {

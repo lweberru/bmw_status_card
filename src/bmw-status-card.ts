@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.53';
+const VERSION = '0.1.54';
 
 type HassState = {
   entity_id: string;
@@ -62,6 +62,7 @@ type ImageAiConfig = {
   cache_hours?: number;
   generate_on_demand?: boolean;
   generate_request_id?: string;
+  generate_on_save?: boolean;
   request_body?: Record<string, any>;
   response_path?: string;
 };
@@ -119,6 +120,7 @@ class BMWStatusCard extends LitElement {
   private _lastVehicleConfigKey?: string;
   private _lastImageStatus?: string;
   private _deviceTrackerEntity?: string;
+  private _autoGenerateOnce = false;
   private _statusEntities?: {
     fuel?: string;
     motion?: string;
@@ -195,6 +197,7 @@ class BMWStatusCard extends LitElement {
     this._entityEntriesCache = undefined;
     this._deviceEntriesCache = undefined;
     this._ensureVehicleCardLoaded();
+    this._autoGenerateOnce = this._shouldAutoGenerateOnce();
     this._ensureConfig();
   }
 
@@ -294,10 +297,14 @@ class BMWStatusCard extends LitElement {
     if (!this._config?.image || this._config.image.mode !== 'ai') return;
     const ai = this._config.image.ai || {};
     const onDemand = ai.generate_on_demand !== false;
-    if (onDemand && !ai.generate_request_id) return;
     const status = this._getVehicleStatusLabel() || 'unknown';
     if (this._lastImageStatus === status) return;
     this._lastImageStatus = status;
+    if (onDemand && !ai.generate_request_id) {
+      const allowOnSave = ai.generate_on_save !== false;
+      if (!allowOnSave || this._isInEditor()) return;
+      this._autoGenerateOnce = true;
+    }
     this._ensureConfig();
   }
 
@@ -559,7 +566,11 @@ class BMWStatusCard extends LitElement {
     }
 
     if (onDemand && !ai.generate_request_id) {
-      return [];
+      if (this._autoGenerateOnce) {
+        this._autoGenerateOnce = false;
+      } else {
+        return [];
+      }
     }
 
     let images: string[] = [];
@@ -615,6 +626,24 @@ class BMWStatusCard extends LitElement {
       : ['front 3/4 view', 'rear 3/4 view', 'side profile', 'front view', 'rear view'];
 
     return views.map((view) => this._buildPrompt(vehicleInfo, baseTemplate, view));
+  }
+
+  private _shouldAutoGenerateOnce(): boolean {
+    const ai = this._config?.image?.ai;
+    if (!ai || this._config?.image?.mode !== 'ai') return false;
+    const onDemand = ai.generate_on_demand !== false;
+    const allowOnSave = ai.generate_on_save !== false;
+    if (!onDemand || !allowOnSave) return false;
+    if (ai.generate_request_id) return false;
+    return !this._isInEditor();
+  }
+
+  private _isInEditor(): boolean {
+    return Boolean(
+      this.closest('hui-dialog-edit-card') ||
+        this.closest('hui-card-element-editor') ||
+        this.closest('hui-card-preview')
+    );
   }
 
   private _buildPrompt(vehicleInfo: VehicleInfo, template?: string, view?: string): string {

@@ -77,6 +77,7 @@ type BMWStatusCardConfig = {
   bmw_cardata_device_id: string;
   vehicle_status_card?: Record<string, any>;
   maptiler_api_key?: string;
+  maptiler_style?: string;
   vehicle_status_card_resource?: string;
   image?: ImageConfig;
   vehicle_info?: VehicleInfo;
@@ -1512,9 +1513,21 @@ class BMWStatusCard extends LitElement {
       indicator_rows.push({ row_items: extraGroups, alignment: 'center', no_wrap: true });
     }
 
+    const hybridCharge = this._isHybridBatteryChargeEntity(batteryCharge);
+    const batteryChargeLabel = isElectric
+      ? 'Batterie'
+      : batteryHealthIs48v || hybridCharge
+        ? '48V Batterie (Ladung)'
+        : '12V Batterie';
+    const batteryHealthLabel = batteryHealthIs48v ? '48V Batteriegesundheit' : 'Batteriegesundheit';
+
     const range_info: any[] = [];
     if (batteryCharge && isElectric) {
       range_info.push({
+        title: 'Batterie',
+        description: 'Ladestand',
+        icon: 'mdi:battery',
+        tooltip: 'Batterie-Ladestand',
         energy_level: { entity: batteryCharge },
         range_level: electricRange || totalRange || range ? { entity: electricRange || totalRange || range } : undefined,
         charging_entity: charging || undefined,
@@ -1523,12 +1536,20 @@ class BMWStatusCard extends LitElement {
     }
     if (batteryHealth && (!batteryHealthIs48v || isElectric)) {
       range_info.push({
+        title: batteryHealthLabel,
+        description: 'Gesundheit',
+        icon: 'mdi:battery-heart',
+        tooltip: batteryHealthLabel,
         energy_level: { entity: batteryHealth, max_value: 100 },
         color_template: this._buildBatteryHealthColorTemplate(batteryHealth)
       });
     }
     if (fuel && electrification !== 'bev') {
       range_info.push({
+        title: 'Kraftstoff',
+        description: 'Tankfüllstand',
+        icon: 'mdi:gas-station',
+        tooltip: 'Kraftstoffstand',
         energy_level: { entity: fuel },
         range_level: fuelRange || totalRange || range ? { entity: fuelRange || totalRange || range } : undefined,
         color_template: this._buildLowFuelColorTemplate(fuel)
@@ -1536,6 +1557,10 @@ class BMWStatusCard extends LitElement {
     }
     if (!range_info.length && range) {
       range_info.push({
+        title: 'Reichweite',
+        description: 'Gesamt',
+        icon: 'mdi:map-marker-distance',
+        tooltip: 'Reichweite',
         energy_level: { entity: range }
       });
     }
@@ -1563,13 +1588,6 @@ class BMWStatusCard extends LitElement {
       items.push({ entity, name, icon });
     };
 
-    const hybridCharge = this._isHybridBatteryChargeEntity(batteryCharge);
-    const batteryChargeLabel = isElectric
-      ? 'Batterie'
-      : batteryHealthIs48v || hybridCharge
-        ? '48V Batterie (Ladung)'
-        : '12V Batterie';
-    const batteryHealthLabel = batteryHealthIs48v ? '48V Batteriegesundheit' : 'Batteriegesundheit';
     addItem(statusItems, batteryCharge, batteryChargeLabel, 'mdi:battery');
     addItem(statusItems, batteryHealth, batteryHealthLabel, 'mdi:battery-heart');
     addItem(statusItems, fuel, 'Kraftstoff', 'mdi:gas-station');
@@ -1626,7 +1644,7 @@ class BMWStatusCard extends LitElement {
           default_card: [
             {
               title: 'Öffnungen',
-              items: doorEntities.map((entity) => ({ entity }))
+              items: doorEntities.map((entity) => ({ entity, name: this._getEntityLabel(entity, entities) }))
             }
           ]
         }
@@ -1691,7 +1709,7 @@ class BMWStatusCard extends LitElement {
           default_card: [
             {
               title: 'Klima',
-              items: climateEntities.map((entity) => ({ entity }))
+              items: climateEntities.map((entity) => ({ entity, name: this._getEntityLabel(entity, entities) }))
             }
           ]
         }
@@ -1735,6 +1753,7 @@ class BMWStatusCard extends LitElement {
             device_tracker: deviceTracker,
             entities: deviceTrackers,
             maptiler_api_key: this._config?.maptiler_api_key,
+          maptiler_style: this._config?.maptiler_style,
             enable_popup: true,
             map_height: 240,
             map_zoom: 14,
@@ -1874,6 +1893,61 @@ class BMWStatusCard extends LitElement {
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, ' ')
       .trim();
+  }
+
+  private _getEntityLabel(entityId: string, entities: EntityInfo[]): string {
+    const entity = entities.find((entry) => entry.entity_id === entityId);
+    const raw = entity?.name?.trim();
+    if (raw) return raw;
+    return this._beautifyEntityName(entityId);
+  }
+
+  private _beautifyEntityName(entityId: string): string {
+    const base = entityId.split('.').pop() || entityId;
+    const tokens = base
+      .split('_')
+      .filter(Boolean)
+      .map((token) => token.toLowerCase());
+    const replacements: Record<string, string> = {
+      door: 'Tür',
+      doors: 'Türen',
+      window: 'Fenster',
+      windows: 'Fenster',
+      trunk: 'Kofferraum',
+      tailgate: 'Heckklappe',
+      boot: 'Kofferraum',
+      hood: 'Motorhaube',
+      bonnet: 'Motorhaube',
+      sunroof: 'Schiebedach',
+      roof: 'Dach',
+      flap: 'Klappe',
+      lock: 'Schloss',
+      charging: 'Laden',
+      port: 'Port',
+      front: 'vorn',
+      rear: 'hinten',
+      left: 'links',
+      right: 'rechts',
+      climate: 'Klima',
+      hvac: 'Klima',
+      preconditioning: 'Vorklimatisierung',
+      defrost: 'Enteisung',
+      seat: 'Sitz',
+      steering: 'Lenkrad',
+      heater: 'Heizung',
+      heating: 'Heizung',
+      cooling: 'Kühlung',
+      air: 'Luft',
+      purification: 'Reinigung',
+      timer: 'Timer',
+      status: 'Status'
+    };
+    const label = tokens
+      .map((token) => replacements[token] || token)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return label ? label.charAt(0).toUpperCase() + label.slice(1) : entityId;
   }
 
   private _normalizeEntityId(value?: string | string[] | null): string | undefined {
@@ -2939,6 +3013,27 @@ class BMWStatusCardEditor extends LitElement {
               data-path="maptiler_api_key"
               @input=${this._onValueChanged}
             ></ha-textfield>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label class="hint">MapTiler Theme</label>
+              <select
+                data-path="maptiler_style"
+                @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                .value=${this._config.maptiler_style || 'streets'}
+              >
+                <option value="streets">Streets</option>
+                <option value="outdoor">Outdoors</option>
+                <option value="satellite">Satellite</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="basic">Basic</option>
+                <option value="bright">Bright</option>
+                <option value="topo">Topo</option>
+                <option value="voyager">Voyager</option>
+              </select>
+            </div>
           </div>
           <div class="hint">Nur nötig, wenn vehicle-status-card nicht über HACS geladen wird.</div>
 

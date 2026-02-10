@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.49';
+const VERSION = '0.1.50';
 
 type HassState = {
   entity_id: string;
@@ -541,7 +541,9 @@ class BMWStatusCard extends LitElement {
           !hasEphemeral &&
           cached.status === statusLabel
         ) {
-          return cached.images;
+          const valid = await this._validateCachedImages(cached.images);
+          if (valid) return cached.images;
+          localStorage.removeItem(cacheKey);
         }
       }
     } catch (_) {
@@ -1011,6 +1013,19 @@ class BMWStatusCard extends LitElement {
     } catch (_) {
       return false;
     }
+  }
+
+  private _isLocalImageUrl(url: string): boolean {
+    return url.startsWith('/local/') || url.startsWith('local/');
+  }
+
+  private async _validateCachedImages(images: string[]): Promise<boolean> {
+    const checks = images
+      .filter((url) => this._isLocalImageUrl(url))
+      .map((url) => this._urlExists(this._normalizeLocalUploadUrl(url) || url));
+    if (!checks.length) return true;
+    const results = await Promise.all(checks);
+    return results.every(Boolean);
   }
 
   private _normalizeUploadPath(rawPath?: string): string {

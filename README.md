@@ -1,13 +1,13 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.46
+Version: 0.1.47
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
 ## Voraussetzungen
 
 - [bmw_home](https://labs.bmw.com/services/cba15ad5-ed53-4ad0-b8a4-6774b477eaf8) und [bmw-cardata-ha](https://github.com/JjyKsi/bmw-cardata-ha) sind installiert und liefern Entities.
-- [vehicle-status-card](https://github.com/ngocjohn/vehicle-status-card) ist installiert (HACS) oder wird per Resource geladen.
+- Die geforkte [vehicle-status-card](https://github.com/lweberru/vehicle-status-card) ist installiert (HACS – Custom Repository) oder wird per Resource geladen.
 - Für persistente KI-Bilder via OpenAI/Gemini: [upload_file](https://github.com/lweberru/upload_file) installieren.
 - Für serverseitige KI-Bilder: [ai_task](https://www.home-assistant.io/integrations/ai_task/) (Home Assistant AI Tasks).
 
@@ -17,7 +17,7 @@ Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata
 2. Nach Installation Ressource hinzufügen:
    - URL: `/hacsfiles/bmw_status_card/bmw-status-card.js`
    - Typ: `module`
-3. Optional: `vehicle-status-card` ebenfalls als Ressource laden (siehe Konfiguration).
+3. Optional: die geforkte `vehicle-status-card` ebenfalls als Ressource laden (siehe Konfiguration).
 
 ## Konfiguration (Beispiel)
 

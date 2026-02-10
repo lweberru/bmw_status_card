@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.46';
+const VERSION = '0.1.47';
 
 type HassState = {
   entity_id: string;
@@ -266,12 +266,12 @@ class BMWStatusCard extends LitElement {
       const vehicleInfo = this._buildVehicleInfo(deviceEntries, entities);
       this._vehicleInfo = vehicleInfo;
 
-      const imagesPromise = this._resolveImages(vehicleInfo);
-      const tireImagePromise = this._resolveTireCardImage(vehicleInfo, entities);
-
       const baseConfig = this._buildVehicleStatusCardConfig(entities, [], undefined);
       this._vehicleConfig = this._mergeVehicleConfig(baseConfig, this._config.vehicle_status_card);
       this.requestUpdate();
+
+      const imagesPromise = this._resolveImages(vehicleInfo);
+      const tireImagePromise = this._resolveTireCardImage(vehicleInfo, entities);
 
       const [images, tireImage] = await Promise.all([imagesPromise, tireImagePromise]);
       if (images.length || tireImage) {

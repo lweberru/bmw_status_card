@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.51';
+const VERSION = '0.1.52';
 
 type HassState = {
   entity_id: string;
@@ -2980,6 +2980,12 @@ class BMWStatusCardEditor extends LitElement {
         delete cursor[lastKey];
       } else {
         cursor[lastKey] = value;
+      }
+
+      if (path !== 'image.ai.generate_request_id') {
+        if (obj.image?.ai?.generate_request_id) {
+          delete obj.image.ai.generate_request_id;
+        }
       }
 
       // cleanup empty objects

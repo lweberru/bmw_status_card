@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.45';
+const VERSION = '0.1.46';
 
 type HassState = {
   entity_id: string;
@@ -117,6 +117,7 @@ class BMWStatusCard extends LitElement {
   private _deviceEntriesCache?: DeviceRegistryEntry[];
   private _lastVehicleConfigKey?: string;
   private _lastImageStatus?: string;
+  private _deviceTrackerEntity?: string;
   private _statusEntities?: {
     fuel?: string;
     motion?: string;
@@ -251,7 +252,9 @@ class BMWStatusCard extends LitElement {
     if (!this._config.bmw_home_device_id || !this._config.bmw_cardata_device_id) return;
 
     this._loading = true;
+    if (!this._vehicleConfig) {
       this._vehicleConfig = undefined;
+    }
     try {
       // eslint-disable-next-line no-console
       console.debug('[bmw-status-card] building config');
@@ -263,10 +266,18 @@ class BMWStatusCard extends LitElement {
       const vehicleInfo = this._buildVehicleInfo(deviceEntries, entities);
       this._vehicleInfo = vehicleInfo;
 
-      const images = await this._resolveImages(vehicleInfo);
-      const tireImage = await this._resolveTireCardImage(vehicleInfo, entities);
-      const baseConfig = this._buildVehicleStatusCardConfig(entities, images, tireImage);
+      const imagesPromise = this._resolveImages(vehicleInfo);
+      const tireImagePromise = this._resolveTireCardImage(vehicleInfo, entities);
+
+      const baseConfig = this._buildVehicleStatusCardConfig(entities, [], undefined);
       this._vehicleConfig = this._mergeVehicleConfig(baseConfig, this._config.vehicle_status_card);
+      this.requestUpdate();
+
+      const [images, tireImage] = await Promise.all([imagesPromise, tireImagePromise]);
+      if (images.length || tireImage) {
+        const nextConfig = this._buildVehicleStatusCardConfig(entities, images, tireImage || undefined);
+        this._vehicleConfig = this._mergeVehicleConfig(nextConfig, this._config.vehicle_status_card);
+      }
       this._error = undefined;
     } catch (err: any) {
       this._error = err?.message || String(err);
@@ -286,7 +297,6 @@ class BMWStatusCard extends LitElement {
     const status = this._getVehicleStatusLabel() || 'unknown';
     if (this._lastImageStatus === status) return;
     this._lastImageStatus = status;
-    this._vehicleConfig = undefined;
     this._ensureConfig();
   }
 
@@ -575,6 +585,14 @@ class BMWStatusCard extends LitElement {
       return ai.prompts.map((prompt) => this._buildPrompt(vehicleInfo, prompt));
     }
 
+    const homeParked = this._isHomeParked();
+    if (homeParked && !(ai.views && ai.views.length)) {
+      const homeViews = [
+        'front 3/4 view, parked on a residential driveway in front of a modern house, daytime'
+      ];
+      return homeViews.map((view) => this._buildPrompt(vehicleInfo, baseTemplate, view));
+    }
+
     const views = ai.views?.length
       ? ai.views
       : ['front 3/4 view', 'rear 3/4 view', 'side profile', 'front view', 'rear view'];
@@ -623,6 +641,14 @@ class BMWStatusCard extends LitElement {
     if (normalized.includes('standing') || normalized.includes('stand'))
       return 'stopped at a traffic light or intersection, stationary';
     return undefined;
+  }
+
+  private _isHomeParked(): boolean {
+    if (!this.hass || !this._deviceTrackerEntity) return false;
+    const trackerState = this.hass.states[this._deviceTrackerEntity]?.state;
+    const inHome = trackerState?.toLowerCase() === 'home';
+    const status = this._getVehicleStatusLabel();
+    return Boolean(inHome && status && ['parking', 'parked'].includes(status));
   }
 
   private async _fetchOpenAiImages(prompt: string, ai: ImageAiConfig, count: number): Promise<string[]> {
@@ -1059,6 +1085,7 @@ class BMWStatusCard extends LitElement {
       views: ai.views,
       status_label: statusLabel,
       status_scene: statusScene,
+      home_parked: this._isHomeParked(),
       generate_request_id: ai.generate_on_demand !== false ? ai.generate_request_id : undefined
     };
     return `bmw-status-card:images:${this._hash(JSON.stringify(payload))}`;
@@ -1563,6 +1590,7 @@ class BMWStatusCard extends LitElement {
 
     const deviceTrackers = entities.filter((entity) => entity.domain === 'device_tracker').map((e) => e.entity_id);
     const deviceTracker = deviceTrackers[0];
+    this._deviceTrackerEntity = deviceTracker;
 
     const tireCard = this._buildTireCardConfig(entities, tireImage);
     const buttonExclusions = new Set<string>(tireCard?.entities || []);
@@ -1899,19 +1927,45 @@ class BMWStatusCard extends LitElement {
   }
 
   private _stripVehiclePrefix(name: string): string {
-    const vehicleName = this._vehicleInfo?.name?.trim();
-    if (!vehicleName) return name;
+    const prefixes = this._getVehiclePrefixes();
+    if (!prefixes.length) return name;
     const lowerName = name.toLowerCase();
-    const lowerVehicle = vehicleName.toLowerCase();
-    if (lowerName.startsWith(lowerVehicle)) {
-      return name.slice(vehicleName.length).trim();
+    for (const prefix of prefixes) {
+      const lowerPrefix = prefix.toLowerCase();
+      if (lowerName.startsWith(lowerPrefix)) {
+        return name.slice(prefix.length).trim();
+      }
     }
     return name;
   }
 
+  private _getVehiclePrefixes(): string[] {
+    const info = this._vehicleInfo;
+    if (!info) return [];
+    const candidates = [
+      info.name,
+      `${info.make || ''} ${info.model || ''}`.trim(),
+      info.model,
+      info.series,
+      info.trim
+    ].filter(Boolean) as string[];
+    return Array.from(new Set(candidates.map((value) => value.trim()).filter(Boolean)));
+  }
+
+  private _stripPrefixToKeyword(value: string, keywords: string[]): string {
+    const lower = value.toLowerCase();
+    const idx = keywords
+      .map((k) => lower.indexOf(k))
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b)[0];
+    if (idx === undefined) return value;
+    return value.slice(idx).trim();
+  }
+
   private _getDoorLabel(entityId: string, entities: EntityInfo[]): string {
     const entity = entities.find((entry) => entry.entity_id === entityId);
-    const source = this._stripVehiclePrefix(entity?.name?.trim() || entityId);
+    const rawSource = this._stripVehiclePrefix(entity?.name?.trim() || entityId);
+    const source = this._stripPrefixToKeyword(rawSource, ['door', 'window', 'tailgate', 'hood', 'sunroof']);
     const text = this._normalizeText(source);
 
     const doorSide = (prefix: string) => {
@@ -1938,7 +1992,8 @@ class BMWStatusCard extends LitElement {
 
   private _getClimateLabel(entityId: string, entities: EntityInfo[]): string {
     const entity = entities.find((entry) => entry.entity_id === entityId);
-    const source = this._stripVehiclePrefix(entity?.name?.trim() || entityId);
+    const rawSource = this._stripVehiclePrefix(entity?.name?.trim() || entityId);
+    const source = this._stripPrefixToKeyword(rawSource, ['climate', 'preconditioning']);
     const text = this._normalizeText(source);
 
     if (text.includes('climate timer')) {

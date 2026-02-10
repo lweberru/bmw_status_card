@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.52';
+const VERSION = '0.1.53';
 
 type HassState = {
   entity_id: string;
@@ -1995,7 +1995,13 @@ class BMWStatusCard extends LitElement {
     arrayKeys.forEach((key) => {
       if (overrides[key] !== undefined) merged[key] = overrides[key];
     });
-    if (overrides.mini_map !== undefined) merged.mini_map = overrides.mini_map;
+    if (overrides.mini_map !== undefined) {
+      if (overrides.mini_map === null) {
+        merged.mini_map = null;
+      } else {
+        merged.mini_map = { ...(baseConfig.mini_map || {}), ...(overrides.mini_map || {}) };
+      }
+    }
     if (overrides.layout_config !== undefined) merged.layout_config = overrides.layout_config;
     return merged;
   }

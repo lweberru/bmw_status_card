@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.47';
+const VERSION = '0.1.48';
 
 type HassState = {
   entity_id: string;
@@ -790,22 +790,52 @@ class BMWStatusCard extends LitElement {
       serviceData.entity_id = targetEntity;
     }
 
-    let response: any;
-    try {
-      response = await this.hass.callWS({
-        type: 'call_service',
-        domain: 'ai_task',
-        service: 'generate_image',
-        service_data: serviceData,
-        return_response: true
-      });
-    } catch (err: any) {
-      throw new Error(`ai_task Fehler: ${err?.message || String(err)}`);
+    const attempts = 2;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const response = await this.hass.callWS({
+          type: 'call_service',
+          domain: 'ai_task',
+          service: 'generate_image',
+          service_data: serviceData,
+          return_response: true
+        });
+
+        const payload = response?.response ?? response?.result ?? response;
+        const urls = await this._extractHaAiTaskUrls(payload);
+        if (urls.length) return urls.filter(Boolean) as string[];
+
+        // eslint-disable-next-line no-console
+        console.warn('[bmw-status-card] ai_task: keine Bild-URL erhalten.', payload);
+        if (attempt < attempts) {
+          await this._delay(600);
+          continue;
+        }
+        return [];
+      } catch (err: any) {
+        const message = err?.message || String(err);
+        const missingImage = /response did not include image|no image|keine.*bild/i.test(message);
+        if (missingImage && attempt < attempts) {
+          // eslint-disable-next-line no-console
+          console.warn('[bmw-status-card] ai_task: leere Bild-Antwort, retry …');
+          await this._delay(600);
+          continue;
+        }
+        if (missingImage) {
+          // eslint-disable-next-line no-console
+          console.warn('[bmw-status-card] ai_task: keine Bilddaten, überspringe.');
+          return [];
+        }
+        throw new Error(`ai_task Fehler: ${message}`);
+      }
     }
 
-    const payload = response?.response ?? response?.result ?? response;
-    const urls = await this._extractHaAiTaskUrls(payload);
-    return urls.filter(Boolean) as string[];
+    return [];
+  }
+
+  private async _delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async _uploadImagesIfNeeded(images: string[], ai: ImageAiConfig): Promise<string[]> {

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.42';
+const VERSION = '0.1.41';
 
 type HassState = {
   entity_id: string;
@@ -263,7 +263,8 @@ class BMWStatusCard extends LitElement {
       this._vehicleInfo = vehicleInfo;
 
       const images = await this._resolveImages(vehicleInfo);
-      const baseConfig = this._buildVehicleStatusCardConfig(entities, images);
+      const tireImage = await this._resolveTireCardImage(vehicleInfo, entities);
+      const baseConfig = this._buildVehicleStatusCardConfig(entities, images, tireImage);
       this._vehicleConfig = this._mergeVehicleConfig(baseConfig, this._config.vehicle_status_card);
       this._error = undefined;
     } catch (err: any) {
@@ -468,6 +469,34 @@ class BMWStatusCard extends LitElement {
     }
 
     return [];
+  }
+
+  private async _resolveTireCardImage(vehicleInfo: VehicleInfo, entities: EntityInfo[]): Promise<string | undefined> {
+    const imageConfig = this._config?.image;
+    if (!imageConfig || imageConfig.mode !== 'ai' || !imageConfig.ai) return undefined;
+
+    const tireKeywords = [
+      'tire',
+      'tyre',
+      'pressure',
+      'wheel',
+      'tpms',
+      'reifen',
+      'reifendruck',
+      'rad'
+    ];
+    const tireCandidates = this._findEntities(entities, ['sensor'], tireKeywords, new Set());
+    if (!tireCandidates.length) return undefined;
+
+    const tireAi: ImageAiConfig = {
+      ...imageConfig.ai,
+      views: ['top-down view, directly above, centered, orthographic, clean studio background'],
+      max_images: 1,
+      count: 1
+    };
+
+    const images = await this._generateAiImages(vehicleInfo, tireAi);
+    return images[0];
   }
 
   private async _generateAiImages(vehicleInfo: VehicleInfo, ai: ImageAiConfig): Promise<string[]> {
@@ -1043,7 +1072,11 @@ class BMWStatusCard extends LitElement {
     return String(hash);
   }
 
-  private _buildVehicleStatusCardConfig(entities: EntityInfo[], images: string[]): Record<string, any> {
+  private _buildVehicleStatusCardConfig(
+    entities: EntityInfo[],
+    images: string[],
+    tireImage?: string
+  ): Record<string, any> {
     const used = new Set<string>();
 
     const lock = this._pickEntity(entities, used, ['lock', 'binary_sensor', 'sensor'], [
@@ -1510,7 +1543,7 @@ class BMWStatusCard extends LitElement {
     const deviceTrackers = entities.filter((entity) => entity.domain === 'device_tracker').map((e) => e.entity_id);
     const deviceTracker = deviceTrackers[0];
 
-    const tireCard = this._buildTireCardConfig(entities);
+    const tireCard = this._buildTireCardConfig(entities, tireImage);
     const buttonExclusions = new Set<string>(tireCard?.entities || []);
 
     this._statusEntities = {
@@ -1875,7 +1908,10 @@ class BMWStatusCard extends LitElement {
     return !Number.isNaN(Number(normalized));
   }
 
-  private _buildTireCardConfig(entities: EntityInfo[]): { tire_card: any; entities: string[] } | undefined {
+  private _buildTireCardConfig(
+    entities: EntityInfo[],
+    tireImage?: string
+  ): { tire_card: any; entities: string[] } | undefined {
     const match = (keywords: string[]) => this._findEntity(entities, ['sensor'], keywords, new Set());
 
     const frontLeft = match(['front left', 'front_left', 'row1 left', 'row1 wheel left']);
@@ -1883,21 +1919,81 @@ class BMWStatusCard extends LitElement {
     const rearLeft = match(['rear left', 'rear_left', 'row2 left', 'row2 wheel left']);
     const rearRight = match(['rear right', 'rear_right', 'row2 right', 'row2 wheel right']);
 
+    const targetMap = new Map<string, string>();
+    entities.forEach((entity) => {
+      if (!this._isTireTargetEntity(entity.entity_id)) return;
+      const key = this._tirePositionKey(entity.entity_id);
+      if (key) targetMap.set(key, entity.entity_id);
+    });
+
+    const buildTireConfig = (entry?: EntityInfo, label?: string) => {
+      if (!entry) return undefined;
+      const key = this._tirePositionKey(entry.entity_id);
+      const target = key ? targetMap.get(key) : undefined;
+      const config: any = {
+        entity: entry.entity_id,
+        name: label,
+        color: this._buildSingleTireColorTemplate(entry.entity_id, target)
+      };
+      if (target) {
+        config.additional_entities = [{ entity: target, prefix: 'Soll: ' }];
+      }
+      return { config, target };
+    };
+
+    const frontLeftConfig = buildTireConfig(frontLeft, 'Vorne links');
+    const frontRightConfig = buildTireConfig(frontRight, 'Vorne rechts');
+    const rearLeftConfig = buildTireConfig(rearLeft, 'Hinten links');
+    const rearRightConfig = buildTireConfig(rearRight, 'Hinten rechts');
+
     const entitiesUsed = [frontLeft, frontRight, rearLeft, rearRight]
       .filter(Boolean)
       .map((entry) => (entry as EntityInfo).entity_id);
+    const targetEntitiesUsed = [
+      frontLeftConfig?.target,
+      frontRightConfig?.target,
+      rearLeftConfig?.target,
+      rearRightConfig?.target
+    ].filter(Boolean) as string[];
 
     if (!entitiesUsed.length) return undefined;
 
     const tire_card = {
       title: 'Reifendruck',
-      front_left: frontLeft ? { entity: frontLeft.entity_id, name: 'Vorne links' } : undefined,
-      front_right: frontRight ? { entity: frontRight.entity_id, name: 'Vorne rechts' } : undefined,
-      rear_left: rearLeft ? { entity: rearLeft.entity_id, name: 'Hinten links' } : undefined,
-      rear_right: rearRight ? { entity: rearRight.entity_id, name: 'Hinten rechts' } : undefined
+      ...(tireImage ? { background: tireImage } : {}),
+      front_left: frontLeftConfig?.config,
+      front_right: frontRightConfig?.config,
+      rear_left: rearLeftConfig?.config,
+      rear_right: rearRightConfig?.config
     };
 
-    return { tire_card, entities: entitiesUsed };
+    return { tire_card, entities: [...entitiesUsed, ...targetEntitiesUsed] };
+  }
+
+  private _buildSingleTireColorTemplate(actual: string, target?: string): string {
+    if (target) {
+      return (
+        `{% set av = states('${actual}') | float(0) %}` +
+        `{% set tv = states('${target}') | float(0) %}` +
+        `{% set state = 'ok' %}` +
+        `{% if tv > 0 and av > 0 %}` +
+        `{% set warn = tv * 0.95 %}{% set err = tv * 0.8 %}` +
+        `{% if av < err %}{% set state = 'error' %}{% elif av < warn %}{% set state = 'warn' %}{% endif %}` +
+        `{% elif av > 0 %}` +
+        `{% if av < 180 %}{% set state = 'error' %}{% elif av < 200 %}{% set state = 'warn' %}{% endif %}` +
+        `{% endif %}` +
+        `{{ iif(state == 'error', 'var(--error-color)', iif(state == 'warn', 'var(--warning-color)', 'var(--success-color)')) }}`
+      );
+    }
+
+    return (
+      `{% set av = states('${actual}') | float(0) %}` +
+      `{% set state = 'ok' %}` +
+      `{% if av > 0 %}` +
+      `{% if av < 180 %}{% set state = 'error' %}{% elif av < 200 %}{% set state = 'warn' %}{% endif %}` +
+      `{% endif %}` +
+      `{{ iif(state == 'error', 'var(--error-color)', iif(state == 'warn', 'var(--warning-color)', 'var(--success-color)')) }}`
+    );
   }
 
   private _isTireTargetEntity(entityId: string): boolean {
@@ -1950,7 +2046,7 @@ class BMWStatusCard extends LitElement {
     const fallbackLiteral = fallback.map((entityId) => `'${entityId}'`).join(', ');
     return `{% set pairs = [${pairsLiteral}] %}{% set fallback = [${fallbackLiteral}] %}{% set ns = namespace(state='ok') %}` +
       `{% for p in pairs %}{% set av = states(p['a']) | float(0) %}{% set tv = states(p['t']) | float(0) %}` +
-      `{% if tv > 0 and av > 0 %}{% set warn = tv * 0.9 %}{% set err = tv * 0.8 %}` +
+      `{% if tv > 0 and av > 0 %}{% set warn = tv * 0.95 %}{% set err = tv * 0.8 %}` +
       `{% if av < err %}{% set ns.state = 'error' %}{% elif av < warn and ns.state != 'error' %}{% set ns.state = 'warn' %}{% endif %}` +
       `{% endif %}{% endfor %}` +
       `{% if ns.state == 'ok' %}{% for e in fallback %}{% set v = states(e) | float(0) %}` +
@@ -2359,6 +2455,7 @@ class BMWStatusCardEditor extends LitElement {
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
+    this._ensureHaComponents();
     this._loadIntegrationEntities();
     if (!BMWStatusCardEditor._errorHooked) {
       BMWStatusCardEditor._errorHooked = true;
@@ -2400,6 +2497,12 @@ class BMWStatusCardEditor extends LitElement {
     };
     this._maybeLoadGeminiModels();
     this._maybeLoadOpenAiModels();
+  }
+
+  private _ensureHaComponents(): void {
+    if (!customElements.get('ha-entity-picker')) {
+      (customElements.get('hui-entities-card') as any)?.getConfigElement?.();
+    }
   }
 
   private async _loadIntegrationEntities(): Promise<void> {

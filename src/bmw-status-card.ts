@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.58';
+const VERSION = '0.1.59';
 
 type HassState = {
   entity_id: string;
@@ -868,8 +868,10 @@ class BMWStatusCard extends LitElement {
     if (!this.hass) throw new Error('Home Assistant nicht verfügbar.');
 
     const targetEntity = this._normalizeEntityId(ai.ha_entity_id);
+    const baseTaskName = this._vehicleInfo?.name || this._config?.vehicle_info?.name || 'BMW Status Card';
+    const promptHash = this._hash(prompt);
     const serviceData: Record<string, any> = {
-      task_name: this._vehicleInfo?.name || this._config?.vehicle_info?.name || 'BMW Status Card',
+      task_name: `${baseTaskName} [${promptHash}]`,
       instructions: prompt
     };
     if (targetEntity) {

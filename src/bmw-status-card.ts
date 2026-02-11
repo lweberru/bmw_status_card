@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.55';
+const VERSION = '0.1.56';
 
 type HassState = {
   entity_id: string;
@@ -1736,12 +1736,13 @@ class BMWStatusCard extends LitElement {
       range_info.push({
         title: 'Batterie Ladestand',
         icon: 'mdi:battery',
-        energy_level: { entity: batteryCharge, hide_icon: true },
+        energy_level: { entity: batteryCharge, max_value: 100, hide_icon: true },
         range_level: electricRange || totalRange || range
           ? { entity: electricRange || totalRange || range, hide_icon: true }
           : undefined,
         charging_entity: charging || undefined,
-        charge_target_entity: chargeTarget || undefined
+        charge_target_entity: chargeTarget || undefined,
+        progress_color: 'var(--success-color)'
       });
     }
     if (batteryHealth && (!batteryHealthIs48v || isElectric)) {
@@ -1837,7 +1838,8 @@ class BMWStatusCard extends LitElement {
     }
 
     if (doorEntities.length) {
-      const doorTemplates = this._buildDoorTemplates(doorEntities, motion);
+      const doorTemplateEntities = doorEntities.filter((entity) => !this._isDoorOverallEntity(entity));
+      const doorTemplates = this._buildDoorTemplates(doorTemplateEntities, motion);
       specialButtons.push({
         name: 'Öffnungen',
         icon: 'mdi:car-door',
@@ -2387,6 +2389,11 @@ class BMWStatusCard extends LitElement {
       text.includes('tailgate') ||
       text.includes('sunroof overall')
     );
+  }
+
+  private _isDoorOverallEntity(entityId: string): boolean {
+    const text = this._normalizeText(entityId);
+    return text.includes('doors overall');
   }
 
   private _getVehicleStatusLabel(): string | undefined {

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.54';
+const VERSION = '0.1.55';
 
 type HassState = {
   entity_id: string;
@@ -516,7 +516,9 @@ class BMWStatusCard extends LitElement {
 
     const tireAi: ImageAiConfig = {
       ...imageConfig.ai,
-      views: ['top-down view, directly above, centered, orthographic, clean studio background'],
+      views: [
+        'top-down view, directly above, centered, orthographic, clean studio background, front of the car at the top of the image, driver side on the left'
+      ],
       max_images: 1,
       count: 1
     };

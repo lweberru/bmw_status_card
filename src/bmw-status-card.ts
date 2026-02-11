@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.61';
+const VERSION = '0.1.62';
 
 type HassState = {
   entity_id: string;
@@ -539,6 +539,7 @@ class BMWStatusCard extends LitElement {
     const provider = ai.provider || 'ha_ai_task';
     const cacheHours = ai.cache_hours ?? 24;
     const cacheKey = this._buildImageCacheKey(vehicleInfo, ai);
+    const cacheBust = Date.now();
     const prompts = this._buildPrompts(vehicleInfo, ai);
     const countPerPrompt = ai.count ?? 1;
     const maxImages = ai.max_images ?? 8;
@@ -550,8 +551,11 @@ class BMWStatusCard extends LitElement {
     const modelLabel = this._resolveAiModel(provider, ai);
 
     if (uploadEnabled) {
-      const persistent = await this._tryGetPersistentCache(cacheKey, ai, maxImages, vehicleInfo);
+      const persistent = await this._tryGetPersistentCache(cacheKey, ai, maxImages, vehicleInfo, cacheBust);
       if (persistent.length) {
+        if (tagMetadata) {
+          await this._ensureImageMetadataForCached(persistent, prompts, ai, cacheKey, vehicleInfo);
+        }
         return persistent;
       }
     }
@@ -616,7 +620,7 @@ class BMWStatusCard extends LitElement {
     }
 
     if (images.length && uploadEnabled) {
-      images = await this._uploadImagesIfNeeded(images, ai, cacheKey, vehicleInfo);
+      images = await this._uploadImagesIfNeeded(images, ai, cacheKey, vehicleInfo, cacheBust);
     }
 
     if (images.length && tagMetadata && metadata.length) {
@@ -713,7 +717,7 @@ class BMWStatusCard extends LitElement {
     }
 
     if (plate && !rawTemplate.includes('{plate}')) {
-      prompt = `${prompt} license plate: ${plate}`;
+      prompt = `${prompt} license plate text: ${plate}`;
     }
 
     return prompt.replace(/\s+/g, ' ').trim();
@@ -930,7 +934,8 @@ class BMWStatusCard extends LitElement {
     images: string[],
     ai: ImageAiConfig,
     cacheKey?: string,
-    vehicleInfo?: VehicleInfo
+    vehicleInfo?: VehicleInfo,
+    cacheBust?: number
   ): Promise<string[]> {
     if (!this.hass) return images;
 
@@ -1009,7 +1014,8 @@ class BMWStatusCard extends LitElement {
         });
         const payload = response?.response ?? response?.result ?? response;
         const localUrl = payload?.local_url || payload?.url || payload?.local_path;
-        results.push(this._normalizeLocalUploadUrl(localUrl) || image);
+        const normalizedUrl = this._normalizeLocalUploadUrl(localUrl) || image;
+        results.push(this._withCacheBust(normalizedUrl, cacheKey, cacheBust));
       } catch (_) {
         if (provider !== 'ha_ai_task') {
           results.push(image);
@@ -1079,6 +1085,65 @@ class BMWStatusCard extends LitElement {
     }
   }
 
+  private async _ensureImageMetadataForCached(
+    images: string[],
+    prompts: string[],
+    ai: ImageAiConfig,
+    cacheKey: string,
+    vehicleInfo?: VehicleInfo
+  ): Promise<void> {
+    if (!this.hass) return;
+
+    const uploadPath = this._normalizeUploadPath(ai.upload_path);
+    const filenamePrefix = this._buildImageFilenamePrefix(vehicleInfo, cacheKey);
+    const provider = ai.provider || 'ha_ai_task';
+    const model = this._resolveAiModel(provider, ai);
+    const status = this._getVehicleStatusLabel() || 'unknown';
+    const info = vehicleInfo || this._vehicleInfo || {};
+
+    for (let index = 0; index < images.length; index += 1) {
+      const filename = `${filenamePrefix}-${index + 1}.meta.json`;
+      const metaUrl = this._buildLocalUploadUrl(uploadPath, filename);
+      if (await this._urlExists(metaUrl)) continue;
+
+      const prompt = prompts[index] || prompts[0] || '';
+      const payload = {
+        image_url: images[index],
+        prompt,
+        provider,
+        model,
+        created_at: new Date().toISOString(),
+        status,
+        vehicle: {
+          make: info.make,
+          model: info.model,
+          series: info.series,
+          year: info.year,
+          color: info.color,
+          trim: info.trim,
+          body: info.body,
+          license_plate: info.license_plate
+        }
+      };
+
+      try {
+        await this.hass.callWS({
+          type: 'call_service',
+          domain: 'upload_file',
+          service: 'upload_file',
+          service_data: {
+            path: uploadPath,
+            filename,
+            data_base64: this._toBase64(JSON.stringify(payload, null, 2))
+          },
+          return_response: true
+        });
+      } catch (_) {
+        // ignore metadata upload errors
+      }
+    }
+  }
+
   private _toBase64(value: string): string {
     return btoa(unescape(encodeURIComponent(value)));
   }
@@ -1087,7 +1152,8 @@ class BMWStatusCard extends LitElement {
     cacheKey: string,
     ai: ImageAiConfig,
     maxImages: number,
-    vehicleInfo?: VehicleInfo
+    vehicleInfo?: VehicleInfo,
+    cacheBust?: number
   ): Promise<string[]> {
     const uploadPath = this._normalizeUploadPath(ai.upload_path);
     const prefix = this._buildImageFilenamePrefix(vehicleInfo, cacheKey);
@@ -1105,7 +1171,7 @@ class BMWStatusCard extends LitElement {
         }
       }
       if (!foundUrl) break;
-      urls.push(foundUrl);
+      urls.push(this._withCacheBust(foundUrl, cacheKey, cacheBust));
     }
 
     return urls;
@@ -1115,6 +1181,14 @@ class BMWStatusCard extends LitElement {
     const normalized = this._normalizeUploadPath(uploadPath);
     const path = normalized.replace(/^www\//, '');
     return `/local/${path}/${filename}`;
+  }
+
+  private _withCacheBust(url: string, cacheKey?: string, cacheBust?: number): string {
+    if (!cacheKey) return url;
+    if (!this._isLocalImageUrl(url)) return url;
+    const token = this._hash(`${cacheKey}:${cacheBust ?? Date.now()}`);
+    const joiner = url.includes('?') ? '&' : '?';
+    return `${url}${joiner}v=${token}`;
   }
 
   private _buildImageFilenamePrefix(vehicleInfo?: VehicleInfo, cacheKey?: string): string {

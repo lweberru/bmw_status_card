@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.60';
+const VERSION = '0.1.61';
 
 type HassState = {
   entity_id: string;
@@ -2436,10 +2436,10 @@ class BMWStatusCard extends LitElement {
     const tire_card = {
       title: 'Reifendruck',
       ...(tireImage ? { background: tireImage } : {}),
-      front_left: frontLeftConfig?.config,
-      front_right: frontRightConfig?.config,
-      rear_left: rearLeftConfig?.config,
-      rear_right: rearRightConfig?.config
+      front_left: rearLeftConfig?.config,
+      front_right: rearRightConfig?.config,
+      rear_left: frontLeftConfig?.config,
+      rear_right: frontRightConfig?.config
     };
 
     return { tire_card, entities: [...entitiesUsed, ...targetEntitiesUsed] };

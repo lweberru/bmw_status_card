@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.56';
+const VERSION = '0.1.57';
 
 type HassState = {
   entity_id: string;
@@ -1737,9 +1737,7 @@ class BMWStatusCard extends LitElement {
         title: 'Batterie Ladestand',
         icon: 'mdi:battery',
         energy_level: { entity: batteryCharge, max_value: 100, hide_icon: true },
-        range_level: electricRange || totalRange || range
-          ? { entity: electricRange || totalRange || range, hide_icon: true }
-          : undefined,
+        range_level: { value: 100, unit: '%', hide_icon: true },
         charging_entity: charging || undefined,
         charge_target_entity: chargeTarget || undefined,
         progress_color: 'var(--success-color)'

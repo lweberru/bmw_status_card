@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.57';
+const VERSION = '0.1.58';
 
 type HassState = {
   entity_id: string;
@@ -56,6 +56,7 @@ type ImageAiConfig = {
   ha_entity_id?: string;
   upload?: boolean;
   upload_path?: string;
+  tag_metadata?: boolean;
   prompt_template?: string;
   prompts?: string[];
   views?: string[];
@@ -71,6 +72,13 @@ type ImageConfig = {
   mode?: 'ai' | 'static' | 'off';
   static_urls?: string[];
   ai?: ImageAiConfig;
+};
+
+type ImageTagMeta = {
+  prompt: string;
+  provider: string;
+  model?: string;
+  created_at: string;
 };
 
 type BMWStatusCardConfig = {
@@ -538,6 +546,8 @@ class BMWStatusCard extends LitElement {
     const statusLabel = this._getVehicleStatusLabel() || 'unknown';
     const uploadEnabledBase = ai.upload ?? (provider === 'openai' || provider === 'gemini' || provider === 'ha_ai_task');
     const uploadEnabled = provider === 'ha_ai_task' ? true : uploadEnabledBase;
+    const tagMetadata = ai.tag_metadata === true;
+    const modelLabel = this._resolveAiModel(provider, ai);
 
     if (uploadEnabled) {
       const persistent = await this._tryGetPersistentCache(cacheKey, ai, maxImages, vehicleInfo);
@@ -576,6 +586,7 @@ class BMWStatusCard extends LitElement {
     }
 
     let images: string[] = [];
+    const metadata: ImageTagMeta[] = [];
 
     for (const prompt of prompts) {
       if (images.length >= maxImages) break;
@@ -583,19 +594,33 @@ class BMWStatusCard extends LitElement {
       const batchCount = Math.min(countPerPrompt, remaining);
       if (batchCount <= 0) break;
 
+      let batch: string[] = [];
       if (provider === 'openai') {
-        images.push(...(await this._fetchOpenAiImages(prompt, ai, batchCount)));
+        batch = await this._fetchOpenAiImages(prompt, ai, batchCount);
       } else if (provider === 'gemini') {
-        images.push(...(await this._fetchGeminiImages(prompt, ai, batchCount)));
+        batch = await this._fetchGeminiImages(prompt, ai, batchCount);
       } else if (provider === 'ha_ai_task') {
-        images.push(...(await this._fetchHaAiTaskImages(prompt, ai, batchCount)));
+        batch = await this._fetchHaAiTaskImages(prompt, ai, batchCount);
       } else {
-        images.push(...(await this._fetchGenericImages(prompt, ai, batchCount)));
+        batch = await this._fetchGenericImages(prompt, ai, batchCount);
+      }
+      if (batch.length) {
+        images.push(...batch);
+        if (tagMetadata) {
+          const created_at = new Date().toISOString();
+          batch.forEach(() =>
+            metadata.push({ prompt, provider, model: modelLabel, created_at })
+          );
+        }
       }
     }
 
     if (images.length && uploadEnabled) {
       images = await this._uploadImagesIfNeeded(images, ai, cacheKey, vehicleInfo);
+    }
+
+    if (images.length && tagMetadata && metadata.length) {
+      await this._storeImageMetadata(images, metadata, ai, cacheKey, vehicleInfo);
     }
 
     if (images.length && images.every((image) => this._isCacheableImageUrl(image))) {
@@ -607,6 +632,13 @@ class BMWStatusCard extends LitElement {
     }
 
     return images;
+  }
+
+  private _resolveAiModel(provider: string, ai: ImageAiConfig): string | undefined {
+    if (ai.model) return ai.model;
+    if (provider === 'openai') return 'gpt-image-1';
+    if (provider === 'gemini') return 'imagen-3.0-generate-002';
+    return undefined;
   }
 
   private _buildPrompts(vehicleInfo: VehicleInfo, ai: ImageAiConfig): string[] {
@@ -984,6 +1016,69 @@ class BMWStatusCard extends LitElement {
     }
 
     return results;
+  }
+
+  private async _storeImageMetadata(
+    images: string[],
+    metadata: ImageTagMeta[],
+    ai: ImageAiConfig,
+    cacheKey?: string,
+    vehicleInfo?: VehicleInfo
+  ): Promise<void> {
+    if (!this.hass || !cacheKey) return;
+
+    const uploadPath = this._normalizeUploadPath(ai.upload_path);
+    const filenamePrefix = this._buildImageFilenamePrefix(vehicleInfo, cacheKey);
+    const status = this._getVehicleStatusLabel() || 'unknown';
+    const info = vehicleInfo || this._vehicleInfo || {};
+    const payloads: Record<string, any>[] = [];
+
+    for (let index = 0; index < images.length; index += 1) {
+      const meta = metadata[index];
+      if (!meta) continue;
+      const payload = {
+        image_url: images[index],
+        ...meta,
+        status,
+        vehicle: {
+          make: info.make,
+          model: info.model,
+          series: info.series,
+          year: info.year,
+          color: info.color,
+          trim: info.trim,
+          body: info.body,
+          license_plate: info.license_plate
+        }
+      };
+      payloads.push(payload);
+      const filename = `${filenamePrefix}-${index + 1}.meta.json`;
+      try {
+        await this.hass.callWS({
+          type: 'call_service',
+          domain: 'upload_file',
+          service: 'upload_file',
+          service_data: {
+            path: uploadPath,
+            filename,
+            data_base64: this._toBase64(JSON.stringify(payload, null, 2))
+          },
+          return_response: true
+        });
+      } catch (_) {
+        // ignore metadata upload errors
+      }
+    }
+
+    try {
+      localStorage.setItem(`${cacheKey}:meta`, JSON.stringify({ timestamp: Date.now(), items: payloads }));
+    } catch (_) {
+      // ignore cache errors
+    }
+  }
+
+  private _toBase64(value: string): string {
+    return btoa(unescape(encodeURIComponent(value)));
   }
 
   private async _tryGetPersistentCache(
@@ -3449,6 +3544,14 @@ class BMWStatusCardEditor extends LitElement {
                             @change=${this._onToggleChanged}
                           ></ha-switch>
                         </div>
+                        <div class="field">
+                          <label class="hint">Prompt/Modell als Metadaten speichern</label>
+                          <ha-switch
+                            .checked=${ai.tag_metadata === true}
+                            data-path="image.ai.tag_metadata"
+                            @change=${this._onToggleChanged}
+                          ></ha-switch>
+                        </div>
                         ${uploadEnabled
                           ? html`
                               <ha-textfield
@@ -3462,6 +3565,9 @@ class BMWStatusCardEditor extends LitElement {
                       </div>
                       <div class="hint">
                         Benötigt die Integration <strong>upload_file</strong>.
+                      </div>
+                      <div class="hint">
+                        Speichert eine <code>.meta.json</code> Datei je Bild im Upload-Pfad.
                       </div>
                     `
                   : null}

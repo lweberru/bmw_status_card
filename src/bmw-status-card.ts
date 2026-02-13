@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.68';
+const VERSION = '0.1.69';
 
 type HassState = {
   entity_id: string;
@@ -200,8 +200,8 @@ class BMWStatusCard extends LitElement {
     this._config = config;
     this._vehicleConfig = undefined;
     this._error = undefined;
-    if (!config?.bmw_home_device_id || !config?.bmw_cardata_device_id) {
-      this._error = 'bmw_home_device_id und bmw_cardata_device_id sind erforderlich.';
+    if (!config?.bmw_cardata_device_id) {
+      this._error = 'bmw_cardata_device_id ist erforderlich (bmw_home_device_id ist optional).';
     }
     this._vehicleInfo = undefined;
     this._entityEntriesCache = undefined;
@@ -264,7 +264,7 @@ class BMWStatusCard extends LitElement {
 
   private async _ensureConfig(): Promise<void> {
     if (!this.hass || !this._config || this._loading || this._vehicleConfig) return;
-    if (!this._config.bmw_home_device_id || !this._config.bmw_cardata_device_id) return;
+    if (!this._config.bmw_cardata_device_id) return;
 
     this._loading = true;
     if (!this._vehicleConfig) {
@@ -1667,15 +1667,25 @@ class BMWStatusCard extends LitElement {
       'ladegrenze',
       'ladegrenze soc'
     ]);
-    const odometer = this._pickEntity(entities, used, ['sensor'], [
+    const odometer = this._selectBestOdometer(entities, used, [
       'odometer',
+      'vehicle_mileage',
+      'vehicle mileage',
       'mileage',
       'distance',
       'travelled',
       'kilometerstand',
       'kilometer',
-      'odo',
-      'vehicle mileage'
+      'odo'
+    ]);
+    const altitude = this._pickEntity(entities, used, ['sensor'], [
+      'gps_altitude',
+      'altitude',
+      'hoehe',
+      'höhe',
+      'hohe',
+      'elevation',
+      'height'
     ]);
     const temperature = this._pickEntity(entities, used, ['sensor'], [
       'temperature',
@@ -1755,20 +1765,31 @@ class BMWStatusCard extends LitElement {
       'pwf status',
       'pwf_status'
     ]);
-    const motion = pwfStatus || this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
-      'moving',
-      'motion',
-      'driving',
-      'parking',
-      'fährt',
-      'bewegt',
-      'parked',
-      'stand',
-      'status',
-      'fahrstatus',
-      'pwf',
-      'pwf status'
-    ]);
+    let motion = pwfStatus;
+    if (motion && this._isEntityUnavailable(entities, motion)) {
+      used.delete(motion);
+      motion = undefined;
+    }
+    if (!motion) {
+      motion = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
+        'vehicle_motion_state',
+        'motion state',
+        'motion_state',
+        'vehicle motion',
+        'moving',
+        'motion',
+        'driving',
+        'parking',
+        'fährt',
+        'bewegt',
+        'parked',
+        'stand',
+        'status',
+        'fahrstatus',
+        'pwf',
+        'pwf status'
+      ]);
+    }
     const alarm = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [
       'alarm',
       'anti theft',
@@ -2069,6 +2090,7 @@ class BMWStatusCard extends LitElement {
     addItem(statusItems, fuel, 'Kraftstoff', 'mdi:gas-station');
     addItem(statusItems, electricRange || totalRange || range, 'Reichweite', 'mdi:map-marker-distance');
     addItem(statusItems, odometer, 'Kilometerstand', 'mdi:counter');
+    addItem(statusItems, altitude, 'Höhe', 'mdi:image-filter-hdr');
     addItem(statusItems, temperature, 'Temperatur', 'mdi:thermometer');
     if (isElectric) {
       addItem(statusItems, chargingTime, 'Ladezeit', 'mdi:timer');
@@ -2669,11 +2691,50 @@ class BMWStatusCard extends LitElement {
     if (!entityId || !this.hass) return undefined;
     const state = this.hass.states[entityId]?.state;
     if (!state) return undefined;
+    if (this._isMotionStateBinarySensor(entityId)) {
+      const normalizedBinary = this._normalizeText(state);
+      if (['off', 'false', '0', 'no'].includes(normalizedBinary)) return 'parking';
+      if (['on', 'true', '1', 'yes'].includes(normalizedBinary)) return 'driving';
+    }
     const normalized = this._normalizeText(state);
     if (normalized.includes('driving') || normalized.includes('fahrt')) return 'driving';
     if (normalized.includes('standing') || normalized.includes('stand')) return 'standing';
     if (normalized.includes('park') || normalized.includes('parken')) return 'parking';
     return state;
+  }
+
+  private _isMotionStateBinarySensor(entityId: string): boolean {
+    const text = this._normalizeText(entityId);
+    return text.includes('vehicle motion state') || text.includes('motion state');
+  }
+
+  private _selectBestOdometer(
+    entities: EntityInfo[],
+    used: Set<string>,
+    keywords: string[]
+  ): string | undefined {
+    const candidates = this._findEntities(entities, ['sensor'], keywords, used)
+      .filter((entity) => !this._isAltitudeEntity(entity));
+    if (!candidates.length) return undefined;
+
+    const scored = candidates.map((entity) => {
+      const text = this._normalizeText(`${entity.entity_id} ${entity.name} ${entity.device_class ?? ''}`);
+      let score = 0;
+      if (text.includes('vehicle mileage') || text.includes('vehicle_mileage')) score += 10;
+      if (text.includes('mileage') || text.includes('odometer') || text.includes('kilometerstand')) score += 5;
+      if (!this._isUnknownState(entity.state)) score += 3;
+      return { entity: entity.entity_id, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0]?.entity;
+    if (best) used.add(best);
+    return best;
+  }
+
+  private _isAltitudeEntity(entity: EntityInfo): boolean {
+    const text = this._normalizeText(`${entity.entity_id} ${entity.name} ${entity.device_class ?? ''}`);
+    return text.includes('altitude') || text.includes('hoehe') || text.includes('höhe') || text.includes('elevation');
   }
 
   private _buildTirePressureTemplates(actuals: string[], targets: string[]): {

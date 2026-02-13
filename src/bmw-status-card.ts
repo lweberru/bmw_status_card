@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.67';
+const VERSION = '0.1.68';
 
 type HassState = {
   entity_id: string;
@@ -1282,6 +1282,10 @@ class BMWStatusCard extends LitElement {
   }
 
   private async _urlExists(url: string): Promise<boolean> {
+    if (this.hass && this._isLocalImageUrl(url)) {
+      const viaService = await this._checkLocalFileExists(url);
+      if (viaService !== undefined) return viaService;
+    }
     try {
       const head = await fetch(url, { method: 'HEAD', cache: 'no-store' });
       if (head.ok) return true;
@@ -1294,6 +1298,31 @@ class BMWStatusCard extends LitElement {
     } catch (_) {
       return false;
     }
+  }
+
+  private async _checkLocalFileExists(url: string): Promise<boolean | undefined> {
+    if (!this.hass) return undefined;
+    const normalized = this._normalizeLocalUploadUrl(url) || url;
+    if (!this._isLocalImageUrl(normalized)) return undefined;
+    const localUrl = normalized.split('?')[0];
+
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'upload_file',
+        service: 'file_exists',
+        service_data: {
+          local_url: localUrl
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      if (typeof payload?.exists === 'boolean') return payload.exists;
+    } catch (_) {
+      return undefined;
+    }
+
+    return undefined;
   }
 
   private _isLocalImageUrl(url: string): boolean {

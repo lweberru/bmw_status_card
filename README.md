@@ -4,6 +4,8 @@ Version: 0.1.67
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
+![Example Card](Example%20Card.png)
+
 ## Voraussetzungen
 
 - [bmw_home](https://labs.bmw.com/services/cba15ad5-ed53-4ad0-b8a4-6774b477eaf8) und der Fork [bmw-cardata-ha](https://github.com/kvanbiesen/bmw-cardata-ha) sind installiert und liefern Entities (inkl. Vehicle Image).

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.64';
+const VERSION = '0.1.65';
 
 type HassState = {
   entity_id: string;
@@ -128,6 +128,7 @@ class BMWStatusCard extends LitElement {
   private _lastVehicleConfigKey?: string;
   private _lastImageStatus?: string;
   private _lastImageZone?: string;
+  private _lastDeviceTrackerState?: string;
   private _deviceTrackerEntity?: string;
   private _autoGenerateOnce = false;
   private _statusEntities?: {
@@ -223,6 +224,7 @@ class BMWStatusCard extends LitElement {
       }
     }
     this._maybeRefreshImagesOnStatusChange();
+    this._maybeRefreshMiniMapOnDeviceTrackerChange();
   }
 
   public getCardSize(): number {
@@ -323,6 +325,22 @@ class BMWStatusCard extends LitElement {
       this._lastVehicleConfigKey = undefined;
       this.requestUpdate();
     }
+    this._vehicleConfig = undefined;
+    this._ensureConfig();
+  }
+
+  private _maybeRefreshMiniMapOnDeviceTrackerChange(): void {
+    if (!this._config || !this.hass) return;
+    const trackerId = this._deviceTrackerEntity;
+    if (!trackerId) return;
+    const currentState = this.hass.states[trackerId]?.state;
+    const wasAvailable = this._lastDeviceTrackerState
+      ? !this._isUnknownState(this._lastDeviceTrackerState)
+      : undefined;
+    const isAvailable = currentState ? !this._isUnknownState(currentState) : false;
+    if (this._lastDeviceTrackerState === currentState) return;
+    this._lastDeviceTrackerState = currentState;
+    if (wasAvailable === isAvailable) return;
     this._vehicleConfig = undefined;
     this._ensureConfig();
   }
@@ -1952,9 +1970,15 @@ class BMWStatusCard extends LitElement {
       });
     }
 
-    const deviceTrackers = entities.filter((entity) => entity.domain === 'device_tracker').map((e) => e.entity_id);
-    const deviceTracker = deviceTrackers[0];
+    const deviceTrackerEntities = entities.filter((entity) => entity.domain === 'device_tracker');
+    const availableDeviceTrackers = deviceTrackerEntities
+      .filter((entity) => !this._isUnknownState(entity.state))
+      .map((entity) => entity.entity_id);
+    const deviceTracker = availableDeviceTrackers[0];
     this._deviceTrackerEntity = deviceTracker;
+    this._lastDeviceTrackerState = deviceTracker
+      ? this.hass?.states[deviceTracker]?.state
+      : undefined;
 
     const tireCard = this._buildTireCardConfig(entities, tireImage);
     const buttonExclusions = new Set<string>(tireCard?.entities || []);
@@ -2140,7 +2164,7 @@ class BMWStatusCard extends LitElement {
       mini_map: deviceTracker
         ? {
             device_tracker: deviceTracker,
-            entities: deviceTrackers,
+            entities: availableDeviceTrackers,
             maptiler_api_key: this._config?.maptiler_api_key,
           maptiler_style: this._config?.maptiler_style,
             enable_popup: true,

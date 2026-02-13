@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.63';
+const VERSION = '0.1.64';
 
 type HassState = {
   entity_id: string;
@@ -127,6 +127,7 @@ class BMWStatusCard extends LitElement {
   private _deviceEntriesCache?: DeviceRegistryEntry[];
   private _lastVehicleConfigKey?: string;
   private _lastImageStatus?: string;
+  private _lastImageZone?: string;
   private _deviceTrackerEntity?: string;
   private _autoGenerateOnce = false;
   private _statusEntities?: {
@@ -306,15 +307,23 @@ class BMWStatusCard extends LitElement {
     const ai = this._config.image.ai || {};
     const onDemand = ai.generate_on_demand !== false;
     const status = this._getVehicleStatusLabel() || 'unknown';
-    if (this._lastImageStatus === status) return;
+    const zone = this._deviceTrackerEntity
+      ? this.hass?.states[this._deviceTrackerEntity]?.state || 'unknown'
+      : 'unknown';
+    if (this._lastImageStatus === status && this._lastImageZone === zone) return;
     this._lastImageStatus = status;
+    this._lastImageZone = zone;
     if (onDemand && !ai.generate_request_id) {
       const allowOnSave = ai.generate_on_save !== false;
       if (!allowOnSave || this._isInEditor()) return;
       this._autoGenerateOnce = true;
     }
+    if (this._vehicleConfig) {
+      this._vehicleConfig = { ...this._vehicleConfig, images: [] };
+      this._lastVehicleConfigKey = undefined;
+      this.requestUpdate();
+    }
     this._vehicleConfig = undefined;
-    this._lastVehicleConfigKey = undefined;
     this._ensureConfig();
   }
 

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.66';
+const VERSION = '0.1.67';
 
 type HassState = {
   entity_id: string;
@@ -69,7 +69,7 @@ type ImageAiConfig = {
 };
 
 type ImageConfig = {
-  mode?: 'ai' | 'static' | 'off';
+  mode?: 'ai' | 'static' | 'off' | 'cardata';
   static_urls?: string[];
   ai?: ImageAiConfig;
 };
@@ -515,7 +515,7 @@ class BMWStatusCard extends LitElement {
     const imageConfig = this._config?.image;
     let images: string[] = [];
 
-    if (!imageConfig || imageConfig.mode === 'off') {
+    if (!imageConfig || imageConfig.mode === 'off' || imageConfig.mode === 'cardata') {
       const fallback = this._resolveDefaultImageUrl(entities);
       return fallback ? [fallback] : [];
     }
@@ -3297,8 +3297,8 @@ class BMWStatusCardEditor extends LitElement {
 
   private _onImageModeChanged(ev: CustomEvent): void {
     const target = ev.currentTarget as any;
-    const value = (ev.detail?.value ?? target?.value) as 'off' | 'static' | 'ai';
-    if (!value || !['off', 'static', 'ai'].includes(value)) return;
+    const value = (ev.detail?.value ?? target?.value) as 'off' | 'static' | 'ai' | 'cardata';
+    if (!value || !['off', 'static', 'ai', 'cardata'].includes(value)) return;
     // eslint-disable-next-line no-console
     console.debug('[bmw-status-card] image mode changed:', value);
     if (!this._config) return;
@@ -3307,6 +3307,8 @@ class BMWStatusCardEditor extends LitElement {
       delete config.image;
     } else if (value === 'static') {
       config.image = { ...(config.image || {}), mode: 'static', static_urls: config.image?.static_urls || [] };
+    } else if (value === 'cardata') {
+      config.image = { ...(config.image || {}), mode: 'cardata' };
     } else {
       config.image = { ...(config.image || {}), mode: 'ai', ai: config.image?.ai || {} };
     }
@@ -3605,6 +3607,7 @@ class BMWStatusCardEditor extends LitElement {
             <label class="hint">Bildmodus</label>
             <select @change=${(ev: Event) => this._onImageModeChanged(ev as any)} .value=${imageMode}>
               <option value="off">off (keine Bilder)</option>
+              <option value="cardata">standard (bmw-cardata-ha Fahrzeugbild)</option>
               <option value="static">static (URLs)</option>
               <option value="ai">ai (OpenAI/Gemini/Custom)</option>
             </select>

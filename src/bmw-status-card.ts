@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.65';
+const VERSION = '0.1.66';
 
 type HassState = {
   entity_id: string;
@@ -285,7 +285,7 @@ class BMWStatusCard extends LitElement {
       this._vehicleConfig = this._mergeVehicleConfig(baseConfig, this._config.vehicle_status_card);
       this.requestUpdate();
 
-      const imagesPromise = this._resolveImages(vehicleInfo);
+      const imagesPromise = this._resolveImages(vehicleInfo, entities);
       const tireImagePromise = this._resolveTireCardImage(vehicleInfo, entities);
 
       const [images, tireImage] = await Promise.all([imagesPromise, tireImagePromise]);
@@ -511,27 +511,62 @@ class BMWStatusCard extends LitElement {
     };
   }
 
-  private async _resolveImages(vehicleInfo: VehicleInfo): Promise<string[]> {
+  private async _resolveImages(vehicleInfo: VehicleInfo, entities: EntityInfo[]): Promise<string[]> {
     const imageConfig = this._config?.image;
-    if (!imageConfig || imageConfig.mode === 'off') return [];
+    let images: string[] = [];
 
-    if (imageConfig.mode === 'static' && imageConfig.static_urls?.length) {
-      return imageConfig.static_urls;
+    if (!imageConfig || imageConfig.mode === 'off') {
+      const fallback = this._resolveDefaultImageUrl(entities);
+      return fallback ? [fallback] : [];
     }
 
-    if (imageConfig.mode === 'ai' && imageConfig.ai) {
+    if (imageConfig.mode === 'static' && imageConfig.static_urls?.length) {
+      images = imageConfig.static_urls;
+    } else if (imageConfig.mode === 'ai' && imageConfig.ai) {
       const provider = imageConfig.ai.provider || 'ha_ai_task';
       if ((provider === 'openai' || provider === 'gemini') && !imageConfig.ai.api_key) {
         // eslint-disable-next-line no-console
         console.warn('[bmw-status-card] image.ai.api_key fehlt – überspringe Bildgenerierung.');
-        return [];
+      } else {
+        // eslint-disable-next-line no-console
+        console.debug('[bmw-status-card] generating AI images', imageConfig.ai);
+        images = await this._generateAiImages(vehicleInfo, imageConfig.ai);
       }
-      // eslint-disable-next-line no-console
-      console.debug('[bmw-status-card] generating AI images', imageConfig.ai);
-      return this._generateAiImages(vehicleInfo, imageConfig.ai);
     }
 
-    return [];
+    if (images.length) return images;
+    const fallback = this._resolveDefaultImageUrl(entities);
+    return fallback ? [fallback] : [];
+  }
+
+  private _resolveDefaultImageUrl(entities: EntityInfo[]): string | undefined {
+    if (!this.hass) return undefined;
+    const imageEntity = this._findImageEntity(entities);
+    if (!imageEntity) return undefined;
+    const stateObj = this.hass.states[imageEntity];
+    if (!stateObj) return undefined;
+    const attrs = stateObj.attributes || {};
+    const candidate =
+      attrs.entity_picture ||
+      attrs.image_url ||
+      attrs.image ||
+      attrs.url ||
+      stateObj.state;
+    if (!candidate) return undefined;
+    const normalized = String(candidate).trim();
+    if (!normalized || normalized === 'unknown' || normalized === 'unavailable') return undefined;
+    if (this._isUnknownState(stateObj.state) && !attrs.entity_picture && !attrs.image_url && !attrs.image) {
+      return undefined;
+    }
+    return normalized;
+  }
+
+  private _findImageEntity(entities: EntityInfo[]): string | undefined {
+    const imageKeywords = ['vehicle image', 'vehicle_image', 'car image', 'fahrzeugbild', 'vehicle photo', 'image'];
+    const preferred = this._findEntity(entities, ['image'], imageKeywords, new Set());
+    if (preferred) return preferred.entity_id;
+    const anyImage = entities.find((entity) => entity.domain === 'image');
+    return anyImage?.entity_id;
   }
 
   private async _resolveTireCardImage(vehicleInfo: VehicleInfo, entities: EntityInfo[]): Promise<string | undefined> {

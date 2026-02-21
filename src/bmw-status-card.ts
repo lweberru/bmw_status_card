@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.69';
+const VERSION = '0.1.70';
 
 type HassState = {
   entity_id: string;
@@ -69,9 +69,22 @@ type ImageAiConfig = {
 };
 
 type ImageConfig = {
-  mode?: 'ai' | 'static' | 'off' | 'cardata';
+  mode?: 'ai' | 'static' | 'off' | 'cardata' | 'compositor';
   static_urls?: string[];
   ai?: ImageAiConfig;
+  compositor?: ImageCompositorConfig;
+};
+
+type ImageCompositorConfig = {
+  provider?: {
+    type?: 'ai_task';
+    entity_id?: string;
+    service_data?: Record<string, any>;
+  };
+  base_view?: string;
+  output_path?: string;
+  asset_path?: string;
+  tire_positions?: Partial<Record<'front_left' | 'front_right' | 'rear_left' | 'rear_right', { x: number; y: number }>>;
 };
 
 type ImageTagMeta = {
@@ -129,6 +142,7 @@ class BMWStatusCard extends LitElement {
   private _lastImageStatus?: string;
   private _lastImageZone?: string;
   private _lastDeviceTrackerState?: string;
+  private _lastCompositeStateKey?: string;
   private _deviceTrackerEntity?: string;
   private _autoGenerateOnce = false;
   private _statusEntities?: {
@@ -225,6 +239,7 @@ class BMWStatusCard extends LitElement {
     }
     this._maybeRefreshImagesOnStatusChange();
     this._maybeRefreshMiniMapOnDeviceTrackerChange();
+    this._maybeRefreshCompositeOnStateChange();
   }
 
   public getCardSize(): number {
@@ -325,6 +340,16 @@ class BMWStatusCard extends LitElement {
       this._lastVehicleConfigKey = undefined;
       this.requestUpdate();
     }
+    this._vehicleConfig = undefined;
+    this._ensureConfig();
+  }
+
+  private _maybeRefreshCompositeOnStateChange(): void {
+    if (!this._config?.image || this._config.image.mode !== 'compositor') return;
+    const stateKey = this._buildCompositeStateKey();
+    if (!stateKey) return;
+    if (this._lastCompositeStateKey === stateKey) return;
+    this._lastCompositeStateKey = stateKey;
     this._vehicleConfig = undefined;
     this._ensureConfig();
   }
@@ -522,6 +547,8 @@ class BMWStatusCard extends LitElement {
 
     if (imageConfig.mode === 'static' && imageConfig.static_urls?.length) {
       images = imageConfig.static_urls;
+    } else if (imageConfig.mode === 'compositor') {
+      images = await this._resolveCompositedImages(vehicleInfo, entities);
     } else if (imageConfig.mode === 'ai' && imageConfig.ai) {
       const provider = imageConfig.ai.provider || 'ha_ai_task';
       if ((provider === 'openai' || provider === 'gemini') && !imageConfig.ai.api_key) {
@@ -567,6 +594,361 @@ class BMWStatusCard extends LitElement {
     if (preferred) return preferred.entity_id;
     const anyImage = entities.find((entity) => entity.domain === 'image');
     return anyImage?.entity_id;
+  }
+
+  private async _resolveCompositedImages(vehicleInfo: VehicleInfo, entities: EntityInfo[]): Promise<string[]> {
+    if (!this.hass || !this._config?.image?.compositor) return [];
+
+    const compositor = this._config.image.compositor;
+    const provider = compositor.provider || {};
+    const entityId =
+      this._normalizeEntityId(provider.entity_id) ||
+      this._normalizeEntityId((provider as any).ha_entity_id) ||
+      this._normalizeEntityId(this._config.image.ai?.ha_entity_id);
+
+    const providerPayload = {
+      type: 'ai_task',
+      entity_id: entityId,
+      service_data: provider.service_data || {}
+    };
+
+    const baseView = compositor.base_view || 'front 3/4 view';
+    const assetPath = compositor.asset_path || 'www/image_compositor/assets';
+    const outputPath = compositor.output_path || 'www/image_compositor';
+
+    const assets = this._buildCompositorAssets(vehicleInfo, baseView);
+    let assetMap: Map<string, string> = new Map();
+
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'ensure_assets',
+        service_data: {
+          output_path: assetPath,
+          task_name_prefix: vehicleInfo.name || 'BMW Assets',
+          provider: providerPayload,
+          assets
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      const items = (payload?.assets || []) as Array<{ name?: string; local_url?: string }>;
+      items.forEach((item) => {
+        if (item?.name && item?.local_url) assetMap.set(String(item.name), String(item.local_url));
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[bmw-status-card] image_compositor ensure_assets failed:', err);
+      return [];
+    }
+
+    const baseImage = assetMap.get('base');
+    if (!baseImage) return [];
+
+    const layers = this._buildCompositorLayers(entities, assetMap, compositor);
+    const cacheKey = this._hash(JSON.stringify({ baseView, state: this._buildCompositeStateKey(), layers: layers.length }));
+
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'compose',
+        service_data: {
+          base_image: baseImage,
+          layers,
+          cache_key: cacheKey,
+          output_name: `${cacheKey}.png`,
+          format: 'png',
+          output_path: outputPath
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      const url = payload?.local_url || payload?.url || payload?.local_path;
+      return url ? [String(url)] : [];
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[bmw-status-card] image_compositor compose failed:', err);
+      return [];
+    }
+  }
+
+  private _buildCompositorAssets(vehicleInfo: VehicleInfo, baseView: string): Array<Record<string, any>> {
+    const assets: Array<Record<string, any>> = [];
+    const basePrompt = this._buildCompositorPrompt(vehicleInfo, baseView);
+
+    assets.push({
+      name: 'base',
+      filename: 'base.png',
+      prompt: basePrompt,
+      format: 'png'
+    });
+
+    const openingPrompts: Array<{ name: string; description: string }> = [
+      { name: 'door_front_left_open', description: 'front left door open' },
+      { name: 'door_front_right_open', description: 'front right door open' },
+      { name: 'door_rear_left_open', description: 'rear left door open' },
+      { name: 'door_rear_right_open', description: 'rear right door open' },
+      { name: 'window_front_left_open', description: 'front left window open' },
+      { name: 'window_front_right_open', description: 'front right window open' },
+      { name: 'window_rear_left_open', description: 'rear left window open' },
+      { name: 'window_rear_right_open', description: 'rear right window open' },
+      { name: 'hood_open', description: 'hood open' },
+      { name: 'trunk_open', description: 'trunk or tailgate open' },
+      { name: 'sunroof_open', description: 'sunroof open' },
+      { name: 'sunroof_tilt', description: 'sunroof tilted' }
+    ];
+
+    openingPrompts.forEach((entry) => {
+      assets.push({
+        name: entry.name,
+        filename: `${entry.name}.png`,
+        prompt: `${basePrompt} ${entry.description}, transparent background, only the opened part visible`,
+        format: 'png'
+      });
+    });
+
+    const tirePrompts: Array<{ name: string; description: string }> = [
+      { name: 'tire_ok', description: 'small green circle icon, transparent background' },
+      { name: 'tire_warn', description: 'small yellow circle icon, transparent background' },
+      { name: 'tire_error', description: 'small red circle icon, transparent background' }
+    ];
+
+    tirePrompts.forEach((entry) => {
+      assets.push({
+        name: entry.name,
+        filename: `${entry.name}.png`,
+        prompt: entry.description,
+        format: 'png'
+      });
+    });
+
+    return assets;
+  }
+
+  private _buildCompositorPrompt(vehicleInfo: VehicleInfo, view: string): string {
+    const tokens: Record<string, string> = {
+      '{make}': vehicleInfo.make || 'BMW',
+      '{model}': vehicleInfo.model || '',
+      '{series}': vehicleInfo.series || '',
+      '{year}': vehicleInfo.year || '',
+      '{color}': vehicleInfo.color || '',
+      '{trim}': vehicleInfo.trim || '',
+      '{body}': vehicleInfo.body || '',
+      '{angle}': view || ''
+    };
+
+    let prompt = defaultAiTemplate;
+    Object.entries(tokens).forEach(([key, value]) => {
+      const safeValue = value?.trim();
+      prompt = prompt.replaceAll(key, safeValue || '');
+    });
+
+    if (view && !defaultAiTemplate.includes('{angle}')) {
+      prompt = `${prompt} ${view}`;
+    }
+
+    return prompt.replace(/\s+/g, ' ').trim();
+  }
+
+  private _buildCompositorLayers(
+    entities: EntityInfo[],
+    assetMap: Map<string, string>,
+    compositor: ImageCompositorConfig
+  ): Array<Record<string, any>> {
+    const layers: Array<Record<string, any>> = [];
+
+    const doorEntities = this._pickEntities(entities, new Set(), ['binary_sensor', 'sensor', 'cover'], [
+      'door',
+      'window',
+      'trunk',
+      'tailgate',
+      'boot',
+      'hood',
+      'bonnet',
+      'sunroof',
+      'roof',
+      'flap',
+      'tür',
+      'fenster',
+      'kofferraum',
+      'heckklappe',
+      'motorhaube',
+      'schiebedach',
+      'dach',
+      'klappe',
+      'panoramadach'
+    ]);
+
+    doorEntities.forEach((entityId) => {
+      if (this._isDoorOverallEntity(entityId)) return;
+      const state = this.hass?.states[entityId]?.state;
+      if (!state) return;
+      const open = this._isOpenState(state);
+      const sunroofState = this._getSunroofState(entityId, state);
+      const key = this._getOpeningAssetKey(entityId, sunroofState, open);
+      if (!key) return;
+      const image = assetMap.get(key);
+      if (!image) return;
+      layers.push({ image, x: 0, y: 0, opacity: 1, scale: 1 });
+    });
+
+    const tirePositions = this._resolveTirePositions(compositor);
+    const tireStatus = this._getTireStatusMap(entities);
+    Object.entries(tireStatus).forEach(([position, status]) => {
+      const image = assetMap.get(`tire_${status}`);
+      const coords = tirePositions[position as keyof typeof tirePositions];
+      if (!image || !coords) return;
+      layers.push({ image, x: coords.x, y: coords.y, opacity: 1, scale: 1 });
+    });
+
+    return layers;
+  }
+
+  private _resolveTirePositions(compositor: ImageCompositorConfig): Record<string, { x: number; y: number }> {
+    const defaults: Record<string, { x: number; y: number }> = {
+      front_left: { x: 270, y: 220 },
+      front_right: { x: 740, y: 220 },
+      rear_left: { x: 270, y: 700 },
+      rear_right: { x: 740, y: 700 }
+    };
+    const overrides = compositor.tire_positions || {};
+    return { ...defaults, ...overrides };
+  }
+
+  private _getOpeningAssetKey(entityId: string, sunroofState?: 'open' | 'tilt' | 'closed', isOpen?: boolean): string | undefined {
+    const text = this._normalizeText(entityId);
+
+    if (text.includes('sunroof') || text.includes('schiebedach') || text.includes('panoramadach')) {
+      if (sunroofState === 'tilt') return 'sunroof_tilt';
+      if (sunroofState === 'open') return 'sunroof_open';
+      return undefined;
+    }
+
+    if (!isOpen) return undefined;
+
+    if (text.includes('hood') || text.includes('bonnet') || text.includes('motorhaube')) return 'hood_open';
+    if (text.includes('trunk') || text.includes('tailgate') || text.includes('boot') || text.includes('heckklappe')) return 'trunk_open';
+
+    const isWindow = text.includes('window') || text.includes('fenster');
+    const isDoor = text.includes('door') || text.includes('tür');
+
+    const isFront = text.includes('front') || text.includes('row1') || text.includes('vorn');
+    const isRear = text.includes('rear') || text.includes('row2') || text.includes('hinten');
+    const isLeft = text.includes('left') || text.includes('driver') || text.includes('links');
+    const isRight = text.includes('right') || text.includes('passenger') || text.includes('rechts');
+
+    if (isWindow) {
+      if (isFront && isLeft) return 'window_front_left_open';
+      if (isFront && isRight) return 'window_front_right_open';
+      if (isRear && isLeft) return 'window_rear_left_open';
+      if (isRear && isRight) return 'window_rear_right_open';
+      return undefined;
+    }
+
+    if (isDoor) {
+      if (isFront && isLeft) return 'door_front_left_open';
+      if (isFront && isRight) return 'door_front_right_open';
+      if (isRear && isLeft) return 'door_rear_left_open';
+      if (isRear && isRight) return 'door_rear_right_open';
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  private _isOpenState(state: string): boolean {
+    const normalized = this._normalizeText(state);
+    const closedTokens = [
+      'closed',
+      'geschlossen',
+      'secured',
+      'gesichert',
+      'locked',
+      'verriegelt',
+      'ok',
+      'aus',
+      'off',
+      'false',
+      'no',
+      '0',
+      'inactive',
+      'not open',
+      'unknown',
+      'unavailable',
+      'none',
+      '-'
+    ];
+    return !closedTokens.some((token) => normalized.includes(token));
+  }
+
+  private _getSunroofState(entityId: string, state: string): 'open' | 'tilt' | 'closed' | undefined {
+    const text = this._normalizeText(entityId);
+    if (!(text.includes('sunroof') || text.includes('schiebedach') || text.includes('panoramadach'))) return undefined;
+    const normalized = this._normalizeText(state);
+    if (normalized.includes('tilt') || normalized.includes('tilted') || normalized.includes('gekipp')) return 'tilt';
+    if (this._isOpenState(state)) return 'open';
+    return 'closed';
+  }
+
+  private _getTireStatusMap(entities: EntityInfo[]): Record<string, 'ok' | 'warn' | 'error'> {
+    const result: Record<string, 'ok' | 'warn' | 'error'> = {};
+    const tireEntities = this._pickEntities(entities, new Set(), ['sensor'], [
+      'tire',
+      'tyre',
+      'pressure',
+      'wheel',
+      'tpms',
+      'reifen',
+      'reifendruck',
+      'rad',
+      'solldruck',
+      'target pressure',
+      'tire pressure target'
+    ]);
+    const targetEntities = tireEntities.filter((entity) => this._isTireTargetEntity(entity));
+    const actualEntities = tireEntities.filter((entity) => !this._isTireTargetEntity(entity));
+
+    const targetByKey = new Map<string, number>();
+    targetEntities.forEach((entityId) => {
+      const key = this._tirePositionKey(entityId);
+      const value = Number(this.hass?.states[entityId]?.state);
+      if (key && !Number.isNaN(value)) targetByKey.set(key, value);
+    });
+
+    actualEntities.forEach((entityId) => {
+      const key = this._tirePositionKey(entityId);
+      if (!key) return;
+      const value = Number(this.hass?.states[entityId]?.state);
+      if (Number.isNaN(value)) return;
+      const target = targetByKey.get(key);
+      let status: 'ok' | 'warn' | 'error' = 'ok';
+      if (target !== undefined && target > 0) {
+        if (value < target * 0.8) status = 'error';
+        else if (value < target * 0.95) status = 'warn';
+      } else {
+        if (value < 180) status = 'error';
+        else if (value < 200) status = 'warn';
+      }
+      result[key] = status;
+    });
+
+    return result;
+  }
+
+  private _buildCompositeStateKey(): string | undefined {
+    if (!this.hass || !this._statusEntities) return undefined;
+    const states: Record<string, string | number | null> = {};
+    const tracked = [
+      ...(this._statusEntities.doors || []),
+      ...(this._statusEntities.tires || []),
+      ...(this._statusEntities.tireTargets || [])
+    ];
+    tracked.forEach((entityId) => {
+      states[entityId] = this.hass?.states[entityId]?.state ?? null;
+    });
+    return this._hash(JSON.stringify(states));
   }
 
   private async _resolveTireCardImage(vehicleInfo: VehicleInfo, entities: EntityInfo[]): Promise<string | undefined> {
@@ -3387,8 +3769,8 @@ class BMWStatusCardEditor extends LitElement {
 
   private _onImageModeChanged(ev: CustomEvent): void {
     const target = ev.currentTarget as any;
-    const value = (ev.detail?.value ?? target?.value) as 'off' | 'static' | 'ai' | 'cardata';
-    if (!value || !['off', 'static', 'ai', 'cardata'].includes(value)) return;
+    const value = (ev.detail?.value ?? target?.value) as 'off' | 'static' | 'ai' | 'cardata' | 'compositor';
+    if (!value || !['off', 'static', 'ai', 'cardata', 'compositor'].includes(value)) return;
     // eslint-disable-next-line no-console
     console.debug('[bmw-status-card] image mode changed:', value);
     if (!this._config) return;
@@ -3399,6 +3781,8 @@ class BMWStatusCardEditor extends LitElement {
       config.image = { ...(config.image || {}), mode: 'static', static_urls: config.image?.static_urls || [] };
     } else if (value === 'cardata') {
       config.image = { ...(config.image || {}), mode: 'cardata' };
+    } else if (value === 'compositor') {
+      config.image = { ...(config.image || {}), mode: 'compositor', compositor: config.image?.compositor || {} };
     } else {
       config.image = { ...(config.image || {}), mode: 'ai', ai: config.image?.ai || {} };
     }
@@ -3589,6 +3973,7 @@ class BMWStatusCardEditor extends LitElement {
 
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
+    const compositor = this._config.image?.compositor || {};
     const aiProvider = ai.provider || 'ha_ai_task';
     const aiTaskOptions = (this._aiTaskEntities || []).filter((entityId) => entityId.startsWith('ai_task.'));
     const aiTaskRaw =
@@ -3698,6 +4083,7 @@ class BMWStatusCardEditor extends LitElement {
             <select @change=${(ev: Event) => this._onImageModeChanged(ev as any)} .value=${imageMode}>
               <option value="off">off (keine Bilder)</option>
               <option value="cardata">standard (bmw-cardata-ha Fahrzeugbild)</option>
+              <option value="compositor">compositor (AI-Overlays)</option>
               <option value="static">static (URLs)</option>
               <option value="ai">ai (OpenAI/Gemini/Custom)</option>
             </select>
@@ -3713,6 +4099,48 @@ class BMWStatusCardEditor extends LitElement {
                   @input=${this._onListChanged}
                 ></ha-textarea>
                 <div class="hint">Beispiel: https://.../front.jpg, https://.../rear.jpg</div>
+              `
+            : null}
+
+          ${imageMode === 'compositor'
+            ? html`
+                <div class="row">
+                  <div class="field">
+                    <label class="hint">ai_task Entity (optional)</label>
+                    <ha-entity-picker
+                      .hass=${this.hass}
+                      .value=${compositor.provider?.entity_id || ''}
+                      .includeEntities=${aiTaskOptions}
+                      data-path="image.compositor.provider.entity_id"
+                      @value-changed=${this._onSelectChanged}
+                      allow-custom-entity
+                    ></ha-entity-picker>
+                  </div>
+                  <ha-textfield
+                    label="Basis-Ansicht (optional)"
+                    .value=${compositor.base_view || ''}
+                    data-path="image.compositor.base_view"
+                    placeholder="front 3/4 view"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
+                <div class="row">
+                  <ha-textfield
+                    label="Asset-Pfad (optional)"
+                    .value=${compositor.asset_path || 'www/image_compositor/assets'}
+                    data-path="image.compositor.asset_path"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                  <ha-textfield
+                    label="Output-Pfad (optional)"
+                    .value=${compositor.output_path || 'www/image_compositor'}
+                    data-path="image.compositor.output_path"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
+                <div class="hint">
+                  Nutzt <strong>image_compositor</strong> und <strong>ai_task</strong>, um Basisbild + Overlays zu erzeugen und zu cachen.
+                </div>
               `
             : null}
 

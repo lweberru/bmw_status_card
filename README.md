@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.69
+Version: 0.1.70
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -81,6 +81,8 @@ image:
 
 ### Default-Fahrzeugbild (bmw-cardata-ha)
 
+### Default-Fahrzeugbild (bmw-cardata-ha)
+
 Wenn kein `image`-Block gesetzt ist oder (bei AI) noch kein Bild generiert wurde, nutzt die Karte automatisch das Vehicle-Image aus `image.<fahrzeug>_vehicle_image` (sofern verfügbar).
 
 Alternativ kann im Editor der Modus **standard (bmw-cardata-ha Fahrzeugbild)** gewählt werden. Das entspricht:
@@ -88,6 +90,20 @@ Alternativ kann im Editor der Modus **standard (bmw-cardata-ha Fahrzeugbild)** g
 ```yaml
 image:
   mode: cardata
+```
+
+### Compositor (AI-Overlays)
+
+```yaml
+image:
+  mode: compositor
+  compositor:
+    provider:
+      type: ai_task
+      entity_id: ai_task.google_ai_task
+    base_view: "front 3/4 view"
+    asset_path: "www/image_compositor/assets"
+    output_path: "www/image_compositor"
 ```
 ```
 

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.70';
+const VERSION = '0.1.71';
 
 type HassState = {
   entity_id: string;
@@ -77,13 +77,19 @@ type ImageConfig = {
 
 type ImageCompositorConfig = {
   provider?: {
-    type?: 'ai_task';
+    type?: 'ai_task' | 'openai';
     entity_id?: string;
     service_data?: Record<string, any>;
+    api_key?: string;
+    model?: string;
+    size?: string;
   };
+  base_image?: string;
   base_view?: string;
   output_path?: string;
   asset_path?: string;
+  mask_base_path?: string;
+  mask_map?: Record<string, string>;
   tire_positions?: Partial<Record<'front_left' | 'front_right' | 'rear_left' | 'rear_right', { x: number; y: number }>>;
 };
 
@@ -606,17 +612,41 @@ class BMWStatusCard extends LitElement {
       this._normalizeEntityId((provider as any).ha_entity_id) ||
       this._normalizeEntityId(this._config.image.ai?.ha_entity_id);
 
-    const providerPayload = {
-      type: 'ai_task',
-      entity_id: entityId,
-      service_data: provider.service_data || {}
+    const inferredType = provider.type || (provider.api_key ? 'openai' : undefined) || (entityId ? 'ai_task' : undefined);
+    const providerPayload: Record<string, any> = {
+      ...provider,
+      type: inferredType
     };
+
+    if (providerPayload.type === 'ai_task') {
+      providerPayload.entity_id = entityId;
+      providerPayload.service_data = provider.service_data || {};
+    }
 
     const baseView = compositor.base_view || 'front 3/4 view';
     const assetPath = compositor.asset_path || 'www/image_compositor/assets';
     const outputPath = compositor.output_path || 'www/image_compositor';
+    const openAiMode = providerPayload.type === 'openai';
+    const assetPrefix = this._buildCompositorAssetPrefix(vehicleInfo);
+    const baseStem = `${assetPrefix}_base`;
+    const defaultMaskBase = this._normalizeLocalUploadUrl(
+      assetPath.replace(/\/$/, '').endsWith('/assets')
+        ? assetPath.replace(/\/$/, '').replace(/\/assets$/, '/masks')
+        : `${assetPath.replace(/\/$/, '')}/masks`
+    );
+    const compositorDefaults: ImageCompositorConfig = {
+      ...compositor,
+      mask_base_path: compositor.mask_base_path || defaultMaskBase
+    };
 
-    const assets = this._buildCompositorAssets(vehicleInfo, baseView);
+    const assets = this._buildCompositorAssets(
+      vehicleInfo,
+      baseView,
+      compositorDefaults,
+      openAiMode,
+      assetPrefix,
+      baseStem
+    );
     let assetMap: Map<string, string> = new Map();
 
     try {
@@ -643,7 +673,7 @@ class BMWStatusCard extends LitElement {
       return [];
     }
 
-    const baseImage = assetMap.get('base');
+    const baseImage = compositorDefaults.base_image || assetMap.get('base');
     if (!baseImage) return [];
 
     const layers = this._buildCompositorLayers(entities, assetMap, compositor);
@@ -674,16 +704,38 @@ class BMWStatusCard extends LitElement {
     }
   }
 
-  private _buildCompositorAssets(vehicleInfo: VehicleInfo, baseView: string): Array<Record<string, any>> {
+  private _buildCompositorAssets(
+    vehicleInfo: VehicleInfo,
+    baseView: string,
+    compositor: ImageCompositorConfig,
+    useOpenAi: boolean,
+    assetPrefix: string,
+    baseStem: string
+  ): Array<Record<string, any>> {
     const assets: Array<Record<string, any>> = [];
     const basePrompt = this._buildCompositorPrompt(vehicleInfo, baseView);
+    const baseImage = compositor.base_image;
+    const maskBase = (this._normalizeLocalUploadUrl(compositor.mask_base_path) || compositor.mask_base_path || '').replace(
+      /\/$/,
+      ''
+    );
+    const maskMap = compositor.mask_map || {};
 
-    assets.push({
-      name: 'base',
-      filename: 'base.png',
-      prompt: basePrompt,
-      format: 'png'
-    });
+    const resolveMaskUrl = (name: string): string | undefined => {
+      const direct = maskMap[name];
+      if (direct) return direct;
+      if (maskBase) return `${maskBase}/${name}.png`;
+      return undefined;
+    };
+
+    if (!baseImage) {
+      assets.push({
+        name: 'base',
+        filename: `${baseStem}.png`,
+        prompt: basePrompt,
+        format: 'png'
+      });
+    }
 
     const openingPrompts: Array<{ name: string; description: string }> = [
       { name: 'door_front_left_open', description: 'front left door open' },
@@ -701,11 +753,17 @@ class BMWStatusCard extends LitElement {
     ];
 
     openingPrompts.forEach((entry) => {
+      const maskUrl = resolveMaskUrl(entry.name);
+      const useBaseRef = useOpenAi && !baseImage;
       assets.push({
         name: entry.name,
-        filename: `${entry.name}.png`,
+        filename: `${assetPrefix}_${entry.name}.png`,
         prompt: `${basePrompt} ${entry.description}, transparent background, only the opened part visible`,
-        format: 'png'
+        format: 'png',
+        ...(useOpenAi && baseImage ? { base_image: baseImage } : {}),
+        ...(useBaseRef ? { base_ref: baseStem } : {}),
+        ...(useOpenAi ? { derive_overlay: true } : {}),
+        ...(maskUrl ? { mask_url: maskUrl } : {})
       });
     });
 
@@ -718,7 +776,7 @@ class BMWStatusCard extends LitElement {
     tirePrompts.forEach((entry) => {
       assets.push({
         name: entry.name,
-        filename: `${entry.name}.png`,
+        filename: `${assetPrefix}_${entry.name}.png`,
         prompt: entry.description,
         format: 'png'
       });
@@ -1918,6 +1976,35 @@ class BMWStatusCard extends LitElement {
       generate_request_id: ai.generate_on_demand !== false ? ai.generate_request_id : undefined
     };
     return `bmw-status-card:images:${this._hash(JSON.stringify(payload))}`;
+  }
+
+  private _buildCompositorAssetPrefix(vehicleInfo: VehicleInfo): string {
+    const tokens = [
+      vehicleInfo.make,
+      vehicleInfo.model,
+      vehicleInfo.series,
+      vehicleInfo.year,
+      vehicleInfo.color,
+      vehicleInfo.trim,
+      vehicleInfo.license_plate
+    ]
+      .map((item) => this._slugify(item))
+      .filter(Boolean);
+
+    const base = tokens.join('-');
+    const hash = this._hash(JSON.stringify(vehicleInfo || {}));
+    const prefix = base ? `bmw-${base}-${hash}` : `bmw-${hash}`;
+    return prefix.slice(0, 64);
+  }
+
+  private _slugify(value?: string): string {
+    if (!value) return '';
+    const normalized = value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+    return normalized.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
   private _hash(input: string): string {

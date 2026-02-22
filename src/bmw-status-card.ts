@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.76';
+const VERSION = '0.1.77';
 
 type HassState = {
   entity_id: string;
@@ -3636,7 +3636,10 @@ class BMWStatusCardEditor extends LitElement {
     _geminiModelsError: { state: true },
     _openAiModels: { state: true },
     _openAiModelsLoading: { state: true },
-    _openAiModelsError: { state: true }
+    _openAiModelsError: { state: true },
+    _maskPreviews: { state: true },
+    _maskGenerationBusy: { state: true },
+    _maskGenerationError: { state: true }
   };
 
   private _hass?: HomeAssistant;
@@ -3657,6 +3660,9 @@ class BMWStatusCardEditor extends LitElement {
   private _openAiModelsError?: string;
   private _openAiModelsKey?: string;
   private _openAiModelsTimer?: number;
+  private _maskPreviews: Array<{ name: string; local_url?: string; error?: string }> = [];
+  private _maskGenerationBusy = false;
+  private _maskGenerationError?: string;
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
@@ -3768,6 +3774,31 @@ class BMWStatusCardEditor extends LitElement {
       margin-top: 8px;
       color: var(--error-color, #b00020);
       white-space: pre-wrap;
+    }
+    .mask-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .mask-item {
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--card-background-color, #fff);
+    }
+    .mask-item img {
+      width: 100%;
+      height: auto;
+      border-radius: 4px;
+      display: block;
+      background: #111;
+    }
+    .mask-item .name {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      word-break: break-word;
     }
     select,
     ha-textfield,
@@ -4066,6 +4097,97 @@ class BMWStatusCardEditor extends LitElement {
     await this._resolveDeviceIdFromEntity(entityId, targetKey);
   }
 
+  private _toWwwPath(path: string | undefined, fallback: string): string {
+    const raw = String(path || fallback).trim();
+    if (!raw) return fallback;
+    if (raw.startsWith('/local/')) return `www/${raw.slice('/local/'.length)}`;
+    if (raw.startsWith('local/')) return `www/${raw.slice('local/'.length)}`;
+    if (raw.startsWith('www/')) return raw;
+    return `www/${raw.replace(/^\/+/, '')}`;
+  }
+
+  private _buildCompositorBasePrompt(view: string): string {
+    const info = this._config?.vehicle_info || {};
+    const make = info.make || 'BMW';
+    const model = info.model || '';
+    const year = info.year || '';
+    const color = info.color || '';
+    const series = info.series || '';
+    const trim = info.trim || '';
+    const body = info.body || '';
+    return `High-quality photo of a ${year} ${color} ${make} ${model} ${series} ${trim} ${body}, ${view}, clean studio background.`
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private async _generateCompositorMasks(): Promise<void> {
+    if (!this.hass || !this._config?.image?.compositor) return;
+    const compositor = this._config.image.compositor || {};
+    const provider = compositor.provider || {};
+    const providerType = provider.type || (provider.api_key ? 'gemini' : 'ai_task');
+
+    if (!(providerType === 'gemini' || providerType === 'openai')) {
+      this._maskGenerationError = 'Maskenerzeugung unterstützt aktuell nur gemini/openai.';
+      return;
+    }
+    if (!provider.api_key) {
+      this._maskGenerationError = 'Bitte Provider API Key setzen.';
+      return;
+    }
+
+    this._maskGenerationBusy = true;
+    this._maskGenerationError = undefined;
+    this._maskPreviews = [];
+    this.requestUpdate();
+
+    const baseView = compositor.base_view || 'front 3/4 view';
+    const outputPath = this._toWwwPath(compositor.mask_base_path, 'www/image_compositor/masks');
+    const assetPath = this._toWwwPath(compositor.asset_path, 'www/image_compositor/assets');
+
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'generate_masks',
+        service_data: {
+          output_path: outputPath,
+          asset_path: assetPath,
+          base_image: compositor.base_image,
+          base_view: baseView,
+          base_prompt: this._buildCompositorBasePrompt(baseView),
+          provider: {
+            type: providerType,
+            api_key: provider.api_key,
+            model: provider.model,
+            size: provider.size,
+            service_data: provider.service_data
+          }
+        },
+        return_response: true
+      });
+
+      const payload = response?.response ?? response?.result ?? response;
+      const masks = (payload?.masks || []) as Array<{ name?: string; local_url?: string; error?: string }>;
+      this._maskPreviews = masks.map((item) => ({
+        name: String(item.name || 'mask'),
+        local_url: item.local_url ? String(item.local_url) : undefined,
+        error: item.error ? String(item.error) : undefined
+      }));
+
+      const failed = this._maskPreviews.filter((item) => item.error);
+      if (payload?.error) {
+        this._maskGenerationError = String(payload.error);
+      } else if (failed.length) {
+        this._maskGenerationError = `${failed.length} Masken konnten nicht erzeugt werden.`;
+      }
+    } catch (err: any) {
+      this._maskGenerationError = err?.message || String(err);
+    } finally {
+      this._maskGenerationBusy = false;
+      this.requestUpdate();
+    }
+  }
+
   protected render() {
     if (!this._config) return html``;
 
@@ -4297,12 +4419,47 @@ class BMWStatusCardEditor extends LitElement {
                 </div>
                 <div class="row">
                   <ha-textfield
+                    label="Base-Bild (optional, /local/... oder URL)"
+                    .value=${compositor.base_image || ''}
+                    data-path="image.compositor.base_image"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
+                <div class="row">
+                  <ha-textfield
                     label="Masken-Basispfad (optional)"
                     .value=${compositor.mask_base_path || '/local/image_compositor/masks'}
                     data-path="image.compositor.mask_base_path"
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>
+                <div class="actions">
+                  <ha-button
+                    raised
+                    .disabled=${this._maskGenerationBusy}
+                    @click=${this._generateCompositorMasks}
+                  >${this._maskGenerationBusy ? 'Erzeuge Masken…' : 'Masken automatisch erzeugen'}</ha-button>
+                </div>
+                <div class="hint">
+                  Nutzt <strong>image_compositor.generate_masks</strong> und legt Masken automatisch im Masken-Pfad ab.
+                </div>
+                ${this._maskGenerationError ? html`<div class="error">${this._maskGenerationError}</div>` : null}
+                ${this._maskPreviews.length
+                  ? html`
+                      <div class="mask-grid">
+                        ${this._maskPreviews.map(
+                          (item) => html`
+                            <div class="mask-item">
+                              ${item.local_url
+                                ? html`<img src=${item.local_url} alt=${item.name} />`
+                                : html`<div class="error">${item.error || 'kein Bild'}</div>`}
+                              <div class="name">${item.name}</div>
+                            </div>
+                          `
+                        )}
+                      </div>
+                    `
+                  : null}
                 <div class="hint">
                   Für exakt ausgerichtete BMW-Overlays nutze <strong>Gemini</strong> oder <strong>OpenAI</strong> (Inpainting).
                   <strong>ai_task</strong> ist möglich, aber ohne deterministisches Inpainting.

@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.77';
+const VERSION = '0.1.78';
 
 type HassState = {
   entity_id: string;
@@ -88,6 +88,7 @@ type ImageCompositorConfig = {
   base_view?: string;
   output_path?: string;
   asset_path?: string;
+  regenerate_request_id?: string;
   mask_base_path?: string;
   mask_map?: Record<string, string>;
   tire_positions?: Partial<Record<'front_left' | 'front_right' | 'rear_left' | 'rear_right', { x: number; y: number }>>;
@@ -637,6 +638,8 @@ class BMWStatusCard extends LitElement {
     const baseView = compositor.base_view || 'front 3/4 view';
     const assetPath = compositor.asset_path || 'www/image_compositor/assets';
     const outputPath = compositor.output_path || 'www/image_compositor';
+    const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
+    const forceRegenerate = Boolean(regenerateRequestId);
     const inplaceMode = ['openai', 'gemini'].includes(String(providerPayload.type));
     const assetPrefix = this._buildCompositorAssetPrefix(vehicleInfo);
     const baseStem = `${assetPrefix}_base`;
@@ -675,7 +678,8 @@ class BMWStatusCard extends LitElement {
           output_path: assetPath,
           task_name_prefix: vehicleInfo.name || 'BMW Assets',
           provider: providerPayload,
-          assets
+          assets,
+          force: forceRegenerate
         },
         return_response: true
       });
@@ -710,7 +714,14 @@ class BMWStatusCard extends LitElement {
     }
 
     const layers = this._buildCompositorLayers(entities, assetMap, compositor);
-    const cacheKey = this._hash(JSON.stringify({ baseView, state: this._buildCompositeStateKey(), layers: layers.length }));
+    const cacheKey = this._hash(
+      JSON.stringify({
+        baseView,
+        state: this._buildCompositeStateKey(),
+        layers: layers.length,
+        regenerateRequestId: regenerateRequestId || undefined
+      })
+    );
 
     try {
       const response = await this.hass.callWS({
@@ -729,6 +740,19 @@ class BMWStatusCard extends LitElement {
       });
       const payload = response?.response ?? response?.result ?? response;
       const url = payload?.local_url || payload?.url || payload?.local_path;
+
+      if (forceRegenerate && this._config?.image?.compositor) {
+        const nextConfig: BMWStatusCardConfig = {
+          ...this._config,
+          image: {
+            ...(this._config.image || {}),
+            compositor: { ...(this._config.image?.compositor || {}) }
+          }
+        };
+        delete (nextConfig.image?.compositor as any).regenerate_request_id;
+        this._config = nextConfig;
+      }
+
       return url ? [String(url)] : [];
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -3639,7 +3663,10 @@ class BMWStatusCardEditor extends LitElement {
     _openAiModelsError: { state: true },
     _maskPreviews: { state: true },
     _maskGenerationBusy: { state: true },
-    _maskGenerationError: { state: true }
+    _maskGenerationError: { state: true },
+    _compositorWorkflowStep: { state: true },
+    _compositorWorkflowStatus: { state: true },
+    _compositorWorkflowBusy: { state: true }
   };
 
   private _hass?: HomeAssistant;
@@ -3663,6 +3690,9 @@ class BMWStatusCardEditor extends LitElement {
   private _maskPreviews: Array<{ name: string; local_url?: string; error?: string }> = [];
   private _maskGenerationBusy = false;
   private _maskGenerationError?: string;
+  private _compositorWorkflowStep = 1;
+  private _compositorWorkflowStatus?: string;
+  private _compositorWorkflowBusy = false;
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
@@ -4120,19 +4150,19 @@ class BMWStatusCardEditor extends LitElement {
       .trim();
   }
 
-  private async _generateCompositorMasks(): Promise<void> {
-    if (!this.hass || !this._config?.image?.compositor) return;
+  private async _generateCompositorMasks(baseImageOverride?: string): Promise<boolean> {
+    if (!this.hass || !this._config?.image?.compositor) return false;
     const compositor = this._config.image.compositor || {};
     const provider = compositor.provider || {};
     const providerType = provider.type || (provider.api_key ? 'gemini' : 'ai_task');
 
     if (!(providerType === 'gemini' || providerType === 'openai')) {
       this._maskGenerationError = 'Maskenerzeugung unterstützt aktuell nur gemini/openai.';
-      return;
+      return false;
     }
     if (!provider.api_key) {
       this._maskGenerationError = 'Bitte Provider API Key setzen.';
-      return;
+      return false;
     }
 
     this._maskGenerationBusy = true;
@@ -4152,7 +4182,7 @@ class BMWStatusCardEditor extends LitElement {
         service_data: {
           output_path: outputPath,
           asset_path: assetPath,
-          base_image: compositor.base_image,
+          base_image: baseImageOverride || compositor.base_image,
           base_view: baseView,
           base_prompt: this._buildCompositorBasePrompt(baseView),
           provider: {
@@ -4180,10 +4210,133 @@ class BMWStatusCardEditor extends LitElement {
       } else if (failed.length) {
         this._maskGenerationError = `${failed.length} Masken konnten nicht erzeugt werden.`;
       }
+
+      if (payload?.error) return false;
+      return true;
     } catch (err: any) {
       this._maskGenerationError = err?.message || String(err);
+      return false;
     } finally {
       this._maskGenerationBusy = false;
+      this.requestUpdate();
+    }
+  }
+
+  private async _generateCompositorBaseAsset(): Promise<string | undefined> {
+    if (!this.hass || !this._config?.image?.compositor) return undefined;
+    const compositor = this._config.image.compositor || {};
+    const provider = compositor.provider || {};
+    const providerType = provider.type || (provider.api_key ? 'gemini' : 'ai_task');
+
+    if (!(providerType === 'gemini' || providerType === 'openai')) {
+      this._compositorWorkflowStatus = 'Schritt 1 fehlgeschlagen: Provider muss gemini/openai sein.';
+      return undefined;
+    }
+    if (!provider.api_key) {
+      this._compositorWorkflowStatus = 'Schritt 1 fehlgeschlagen: Provider API Key fehlt.';
+      return undefined;
+    }
+
+    const baseView = compositor.base_view || 'front 3/4 view';
+    const assetPath = this._toWwwPath(compositor.asset_path, 'www/image_compositor/assets');
+
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'ensure_assets',
+        service_data: {
+          output_path: assetPath,
+          force: true,
+          provider: {
+            type: providerType,
+            api_key: provider.api_key,
+            model: provider.model,
+            size: provider.size,
+            service_data: provider.service_data
+          },
+          assets: [
+            {
+              name: 'workflow_base',
+              filename: 'workflow_base.png',
+              prompt: this._buildCompositorBasePrompt(baseView),
+              format: 'png',
+              attempts: 2
+            }
+          ]
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      const items = (payload?.assets || []) as Array<{ local_url?: string; error?: string }>;
+      const first = items[0];
+      if (!first || first.error || !first.local_url) {
+        this._compositorWorkflowStatus = `Schritt 1 fehlgeschlagen: ${first?.error || 'kein Base-Bild erzeugt'}`;
+        return undefined;
+      }
+      this._setConfigValue('image.compositor.base_image', String(first.local_url));
+      return String(first.local_url);
+    } catch (err: any) {
+      this._compositorWorkflowStatus = `Schritt 1 fehlgeschlagen: ${err?.message || String(err)}`;
+      return undefined;
+    }
+  }
+
+  private async _runCompositorWorkflowStep(step: 1 | 2 | 3): Promise<void> {
+    if (!this.hass || !this._config?.image?.compositor) return;
+    if (this._compositorWorkflowBusy) return;
+    this._compositorWorkflowBusy = true;
+    this._compositorWorkflowStatus = undefined;
+
+    try {
+      if (step === 1) {
+        this._compositorWorkflowStatus = 'Schritt 1 läuft: Base neu erzeugen…';
+        const baseUrl = await this._generateCompositorBaseAsset();
+        if (!baseUrl) return;
+        this._compositorWorkflowStep = 2;
+        this._compositorWorkflowStatus = 'Schritt 1 erfolgreich. Als Nächstes: Masken erzeugen.';
+        return;
+      }
+
+      if (step === 2) {
+        if (this._compositorWorkflowStep < 2) {
+          this._compositorWorkflowStatus = 'Bitte zuerst Schritt 1 ausführen.';
+          return;
+        }
+        this._compositorWorkflowStatus = 'Schritt 2 läuft: Masken erzeugen…';
+        const baseImage = this._config.image?.compositor?.base_image;
+        const ok = await this._generateCompositorMasks(baseImage);
+        if (!ok) {
+          this._compositorWorkflowStatus = this._maskGenerationError || 'Schritt 2 fehlgeschlagen.';
+          return;
+        }
+        this._compositorWorkflowStep = 3;
+        this._compositorWorkflowStatus = 'Schritt 2 erfolgreich. Als Nächstes: Overlays/Compose neu bauen.';
+        return;
+      }
+
+      if (this._compositorWorkflowStep < 3) {
+        this._compositorWorkflowStatus = 'Bitte zuerst Schritt 1 und 2 ausführen.';
+        return;
+      }
+
+      this._compositorWorkflowStatus = 'Schritt 3 läuft: Overlays/Compose neu bauen…';
+      try {
+        await this.hass.callWS({
+          type: 'call_service',
+          domain: 'image_compositor',
+          service: 'clear_cache',
+          service_data: {},
+          return_response: true
+        });
+      } catch (_) {
+        // ignore clear cache errors
+      }
+      this._setConfigValue('image.compositor.regenerate_request_id', String(Date.now()));
+      this._compositorWorkflowStep = 1;
+      this._compositorWorkflowStatus = 'Schritt 3 angestoßen. Karte baut Assets/Compose jetzt neu auf.';
+    } finally {
+      this._compositorWorkflowBusy = false;
       this.requestUpdate();
     }
   }
@@ -4440,6 +4593,27 @@ class BMWStatusCardEditor extends LitElement {
                     @click=${this._generateCompositorMasks}
                   >${this._maskGenerationBusy ? 'Erzeuge Masken…' : 'Masken automatisch erzeugen'}</ha-button>
                 </div>
+                <div class="actions">
+                  <ha-button
+                    raised
+                    .disabled=${this._compositorWorkflowBusy}
+                    @click=${() => this._runCompositorWorkflowStep(1)}
+                  >1) Base neu erzeugen</ha-button>
+                  <ha-button
+                    raised
+                    .disabled=${this._compositorWorkflowBusy || this._compositorWorkflowStep < 2}
+                    @click=${() => this._runCompositorWorkflowStep(2)}
+                  >2) Masken neu erzeugen</ha-button>
+                  <ha-button
+                    raised
+                    .disabled=${this._compositorWorkflowBusy || this._compositorWorkflowStep < 3}
+                    @click=${() => this._runCompositorWorkflowStep(3)}
+                  >3) Overlays/Compose neu bauen</ha-button>
+                </div>
+                <div class="hint">
+                  Workflow: erst Base, dann Masken, dann Rebuild. Aktueller Schritt: ${this._compositorWorkflowStep}.
+                </div>
+                ${this._compositorWorkflowStatus ? html`<div class="hint">${this._compositorWorkflowStatus}</div>` : null}
                 <div class="hint">
                   Nutzt <strong>image_compositor.generate_masks</strong> und legt Masken automatisch im Masken-Pfad ab.
                 </div>

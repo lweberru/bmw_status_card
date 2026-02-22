@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.77
+Version: 0.1.78
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -53,7 +53,7 @@ vehicle_info:
   license_plate: "M-AB1234"
 ```
 
-### Gemini (Imagen) Beispiel
+### Gemini Beispiel
 
 ```yaml
 image:
@@ -61,7 +61,7 @@ image:
   ai:
     provider: gemini
     api_key: !secret gemini_api_key
-    model: imagen-3.0-generate-002
+    model: gemini-2.0-flash-preview-image-generation
     aspect_ratio: "1:1"
     count: 1
     max_images: 6
@@ -84,9 +84,9 @@ image:
   static_urls:
     - /local/bmw-images/front.jpg
     - /local/bmw-images/side.jpg
+```
 
 ### Default-Fahrzeugbild (bmw-cardata-ha)
-
 ### Default-Fahrzeugbild (bmw-cardata-ha)
 
 Wenn kein `image`-Block gesetzt ist oder (bei AI) noch kein Bild generiert wurde, nutzt die Karte automatisch das Vehicle-Image aus `image.<fahrzeug>_vehicle_image` (sofern verfügbar).
@@ -107,7 +107,7 @@ image:
     provider:
       type: gemini
       api_key: !secret gemini_api_key
-      model: gemini-2.5-flash-image-preview
+      model: gemini-2.0-flash-preview-image-generation
     base_view: "front 3/4 view"
     asset_path: "www/image_compositor/assets"
     output_path: "www/image_compositor"
@@ -133,7 +133,7 @@ image:
     provider:
       type: gemini
       api_key: !secret gemini_api_key
-      model: gemini-2.5-flash-image-preview
+      model: gemini-2.0-flash-preview-image-generation
       service_data:
         generationConfig:
           temperature: 0.2
@@ -156,19 +156,23 @@ image:
       sunroof_tilt: "/local/image_compositor/masks/sunroof_tilt.png"
 ```
 
-  ### Visueller Editor (Compositor) – einfache Nutzung
+### Visueller Editor (Compositor) – einfache Nutzung
 
-  Im Karten-Editor unter **Bildmodus → compositor (AI-Overlays)** sind jetzt alle relevanten Felder direkt auswählbar:
+Im Karten-Editor unter **Bildmodus → compositor (AI-Overlays)** sind jetzt alle relevanten Felder direkt auswählbar:
 
-  - **Compositor Provider**: `gemini` (empfohlen), `openai` oder `ai_task`
-  - Bei `gemini`/`openai`: **API Key** + **Model** (bei OpenAI zusätzlich **Bildgröße**)
-  - Bei `ai_task`: **ai_task Entity**
-  - Für alle Varianten: **Basis-Ansicht**, **Asset-Pfad**, **Output-Pfad**, **Masken-Basispfad**
-  - Neu: **Masken automatisch erzeugen** (Button) inkl. Vorschau der erzeugten Masken im Editor
+- **Compositor Provider**: `gemini` (empfohlen), `openai` oder `ai_task`
+- Bei `gemini`/`openai`: **API Key** + **Model** (bei OpenAI zusätzlich **Bildgröße**)
+- Bei `ai_task`: **ai_task Entity**
+- Für alle Varianten: **Basis-Ansicht**, **Asset-Pfad**, **Output-Pfad**, **Masken-Basispfad**
+- Neu: **Masken automatisch erzeugen** (Button) inkl. Vorschau der erzeugten Masken im Editor
+- Neu: geführter 3-Schritt-Workflow mit Buttons:
+  1. **Base neu erzeugen**
+  2. **Masken neu erzeugen**
+  3. **Overlays/Compose neu bauen**
 
-  Hinweis:
-  - Für präzise, deckungsgleiche BMW-Overlays nutze `gemini` oder `openai` (Inpainting).
-  - `ai_task` ist weiterhin möglich, aber ohne deterministisches Inpainting.
+Hinweis:
+- Für präzise, deckungsgleiche BMW-Overlays nutze `gemini` oder `openai` (Inpainting).
+- `ai_task` ist weiterhin möglich, aber ohne deterministisches Inpainting.
 
 ### Overrides für vehicle-status-card
 
@@ -197,7 +201,7 @@ Du kannst per `vehicle_status_card` die generierte Konfiguration jederzeit über
 
 - Die Karte speichert generierte Bilder im Browser-Cache (Standard: 24h).
 - Für Provider `openai` wird `image.ai.api_key` benötigt.
-- Für Provider `gemini` wird `image.ai.api_key` benötigt (Imagen API).
+- Für Provider `gemini` wird `image.ai.api_key` benötigt (Gemini API).
 - Für Provider `ha_ai_task` wird `image.ai.ha_entity_id` empfohlen.
 - Im `image.mode: compositor` kann `image.compositor.provider.type` `gemini`, `openai` oder `ai_task` sein.
 - `upload` speichert OpenAI/Gemini-URLs über die [upload_file](https://github.com/lweberru/upload_file)-Integration in `/config/www` (Zugriff via `/local/`).

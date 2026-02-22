@@ -953,9 +953,9 @@ class BMWStatusCard extends LitElement {
     });
 
     const tirePrompts: Array<{ name: string; description: string }> = [
-      { name: 'tire_ok', description: 'small green circle icon, transparent background' },
-      { name: 'tire_warn', description: 'small yellow circle icon, transparent background' },
-      { name: 'tire_error', description: 'small red circle icon, transparent background' }
+      { name: 'tire_ok', description: 'single small green status dot icon only, no background' },
+      { name: 'tire_warn', description: 'single small yellow status dot icon only, no background' },
+      { name: 'tire_error', description: 'single small red status dot icon only, no background' }
     ];
 
     tirePrompts.forEach((entry) => {
@@ -963,7 +963,9 @@ class BMWStatusCard extends LitElement {
         name: entry.name,
         filename: `${assetPrefix}_${entry.name}.png`,
         prompt: entry.description,
-        format: 'png'
+        format: 'png',
+        postprocess: 'icon_overlay',
+        icon_max_size: 92
       });
     });
 

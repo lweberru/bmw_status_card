@@ -617,33 +617,7 @@ class BMWStatusCard extends LitElement {
     if (!this.hass || !this._config?.image?.compositor) return [];
 
     const compositor = this._config.image.compositor;
-    const provider = compositor.provider || {};
-    const entityId =
-      this._normalizeEntityId(provider.entity_id) ||
-      this._normalizeEntityId((provider as any).ha_entity_id) ||
-      this._normalizeEntityId(this._config.image.ai?.ha_entity_id);
-
-    const aiProviderHint = this._config.image?.ai?.provider;
-    const modelHint = String(provider.model || '').toLowerCase();
-    const inferredType =
-      provider.type ||
-      (provider.api_key
-        ? aiProviderHint === 'gemini' || modelHint.includes('gemini') || modelHint.includes('imagen')
-          ? 'gemini'
-          : aiProviderHint === 'openai' || modelHint.includes('gpt') || modelHint.includes('dall')
-            ? 'openai'
-            : 'gemini'
-        : undefined) ||
-      (entityId ? 'ai_task' : undefined);
-    const providerPayload: Record<string, any> = {
-      ...provider,
-      type: inferredType
-    };
-
-    if (providerPayload.type === 'ai_task') {
-      providerPayload.entity_id = entityId;
-      providerPayload.service_data = provider.service_data || {};
-    }
+    const providerPayload = this._buildCompositorProviderPayload(compositor);
 
     const context = this._resolveCompositorContext(compositor, entities);
     const baseView = context.baseView;
@@ -729,7 +703,7 @@ class BMWStatusCard extends LitElement {
       return [];
     }
 
-    const layers = this._buildCompositorLayers(entities, assetMap, compositor);
+    const layers = this._buildCompositorLayers(entities, assetMap, compositor, false);
     const cacheKey = this._hash(
       JSON.stringify({
         baseView,
@@ -780,6 +754,39 @@ class BMWStatusCard extends LitElement {
       console.warn('[bmw-status-card] image_compositor compose failed:', err);
       return [];
     }
+  }
+
+  private _buildCompositorProviderPayload(compositor: ImageCompositorConfig): Record<string, any> {
+    const provider = compositor.provider || {};
+    const entityId =
+      this._normalizeEntityId(provider.entity_id) ||
+      this._normalizeEntityId((provider as any).ha_entity_id) ||
+      this._normalizeEntityId(this._config?.image?.ai?.ha_entity_id);
+
+    const aiProviderHint = this._config?.image?.ai?.provider;
+    const modelHint = String(provider.model || '').toLowerCase();
+    const inferredType =
+      provider.type ||
+      (provider.api_key
+        ? aiProviderHint === 'gemini' || modelHint.includes('gemini') || modelHint.includes('imagen')
+          ? 'gemini'
+          : aiProviderHint === 'openai' || modelHint.includes('gpt') || modelHint.includes('dall')
+            ? 'openai'
+            : 'gemini'
+        : undefined) ||
+      (entityId ? 'ai_task' : undefined);
+
+    const providerPayload: Record<string, any> = {
+      ...provider,
+      type: inferredType
+    };
+
+    if (providerPayload.type === 'ai_task') {
+      providerPayload.entity_id = entityId;
+      providerPayload.service_data = provider.service_data || {};
+    }
+
+    return providerPayload;
   }
 
   private _resolveCompositorContext(
@@ -1049,7 +1056,8 @@ class BMWStatusCard extends LitElement {
   private _buildCompositorLayers(
     entities: EntityInfo[],
     assetMap: Map<string, string>,
-    compositor: ImageCompositorConfig
+    compositor: ImageCompositorConfig,
+    includeTires = true
   ): Array<Record<string, any>> {
     const layers: Array<Record<string, any>> = [];
 
@@ -1088,14 +1096,16 @@ class BMWStatusCard extends LitElement {
       layers.push({ image, x: 0, y: 0, opacity: 1, scale: 1 });
     });
 
-    const tirePositions = this._resolveTirePositions(compositor);
-    const tireStatus = this._getTireStatusMap(entities);
-    Object.entries(tireStatus).forEach(([position, status]) => {
-      const image = assetMap.get(`tire_${status}`);
-      const coords = tirePositions[position as keyof typeof tirePositions];
-      if (!image || !coords) return;
-      layers.push({ image, x: coords.x, y: coords.y, opacity: 1, scale: 1 });
-    });
+    if (includeTires) {
+      const tirePositions = this._resolveTirePositions(compositor);
+      const tireStatus = this._getTireStatusMap(entities);
+      Object.entries(tireStatus).forEach(([position, status]) => {
+        const image = assetMap.get(`tire_${status}`);
+        const coords = tirePositions[position as keyof typeof tirePositions];
+        if (!image || !coords) return;
+        layers.push({ image, x: coords.x, y: coords.y, opacity: 1, scale: 1 });
+      });
+    }
 
     return layers;
   }
@@ -1245,9 +1255,138 @@ class BMWStatusCard extends LitElement {
     return this._hash(JSON.stringify(states));
   }
 
+  private async _resolveCompositedTireCardImage(
+    vehicleInfo: VehicleInfo,
+    entities: EntityInfo[]
+  ): Promise<string | undefined> {
+    if (!this.hass || !this._config?.image?.compositor) return undefined;
+
+    const compositor = this._config.image.compositor;
+    const providerPayload = this._buildCompositorProviderPayload(compositor);
+    if ((providerPayload.type === 'gemini' || providerPayload.type === 'openai') && !providerPayload.api_key) {
+      return undefined;
+    }
+
+    const assetPrefix = `${this._buildCompositorAssetPrefix(vehicleInfo)}-tire`;
+    const assetPath = this._appendPathSegment(compositor.asset_path || 'www/image_compositor/assets', 'tire_topdown');
+    const outputPath = this._appendPathSegment(compositor.output_path || 'www/image_compositor', 'tire_topdown');
+    const baseStem = `${assetPrefix}_base`;
+    const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
+    const forceRegenerate = Boolean(regenerateRequestId);
+
+    const assets: Array<Record<string, any>> = [
+      {
+        name: 'tire_base',
+        filename: `${baseStem}.png`,
+        prompt:
+          'top-down view, directly above, centered, orthographic, clean studio background, front of the car at the bottom of the image, driver side on the left',
+        format: 'png'
+      },
+      {
+        name: 'tire_ok',
+        filename: `${assetPrefix}_tire_ok.png`,
+        prompt: 'single small green status dot icon only, no background',
+        format: 'png',
+        postprocess: 'icon_overlay',
+        icon_max_size: 92
+      },
+      {
+        name: 'tire_warn',
+        filename: `${assetPrefix}_tire_warn.png`,
+        prompt: 'single small yellow status dot icon only, no background',
+        format: 'png',
+        postprocess: 'icon_overlay',
+        icon_max_size: 92
+      },
+      {
+        name: 'tire_error',
+        filename: `${assetPrefix}_tire_error.png`,
+        prompt: 'single small red status dot icon only, no background',
+        format: 'png',
+        postprocess: 'icon_overlay',
+        icon_max_size: 92
+      }
+    ];
+
+    const assetMap = new Map<string, string>();
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'ensure_assets',
+        service_data: {
+          output_path: assetPath,
+          task_name_prefix: `${vehicleInfo.name || 'BMW Assets'} Tire`,
+          provider: providerPayload,
+          assets,
+          force: forceRegenerate
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      const items = (payload?.assets || []) as Array<{ name?: string; local_url?: string; error?: string }>;
+      items.forEach((item) => {
+        if (item?.name && item?.local_url) assetMap.set(String(item.name), String(item.local_url));
+      });
+    } catch (_) {
+      return undefined;
+    }
+
+    const baseImage = assetMap.get('tire_base');
+    if (!baseImage) return undefined;
+
+    const tirePositions = this._resolveTirePositions(compositor);
+    const tireStatus = this._getTireStatusMap(entities);
+    const layers: Array<Record<string, any>> = [];
+    Object.entries(tireStatus).forEach(([position, status]) => {
+      const image = assetMap.get(`tire_${status}`);
+      const coords = tirePositions[position as keyof typeof tirePositions];
+      if (!image || !coords) return;
+      layers.push({ image, x: coords.x, y: coords.y, opacity: 1, scale: 1 });
+    });
+
+    const cacheKey = this._hash(
+      JSON.stringify({
+        assetPath,
+        outputPath,
+        tireStatus,
+        regenerateRequestId: regenerateRequestId || undefined
+      })
+    );
+    const outputName = `${assetPrefix}_state_${Math.abs(Number(cacheKey) || 0)}.png`;
+
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'compose',
+        service_data: {
+          base_image: baseImage,
+          layers,
+          cache_key: cacheKey,
+          output_name: outputName,
+          format: 'png',
+          output_path: outputPath
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      const url = payload?.local_url || payload?.url || payload?.local_path;
+      return url ? String(url) : undefined;
+    } catch (_) {
+      return undefined;
+    }
+  }
+
   private async _resolveTireCardImage(vehicleInfo: VehicleInfo, entities: EntityInfo[]): Promise<string | undefined> {
     const imageConfig = this._config?.image;
-    if (!imageConfig || imageConfig.mode !== 'ai' || !imageConfig.ai) return undefined;
+    if (!imageConfig) return undefined;
+
+    if (imageConfig.mode === 'compositor') {
+      return this._resolveCompositedTireCardImage(vehicleInfo, entities);
+    }
+
+    if (imageConfig.mode !== 'ai' || !imageConfig.ai) return undefined;
 
     const tireKeywords = [
       'tire',

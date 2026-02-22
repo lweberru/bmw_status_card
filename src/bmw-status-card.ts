@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.73';
+const VERSION = '0.1.74';
 
 type HassState = {
   entity_id: string;
@@ -613,14 +613,15 @@ class BMWStatusCard extends LitElement {
       this._normalizeEntityId(this._config.image.ai?.ha_entity_id);
 
     const aiProviderHint = this._config.image?.ai?.provider;
+    const modelHint = String(provider.model || '').toLowerCase();
     const inferredType =
       provider.type ||
       (provider.api_key
-        ? aiProviderHint === 'gemini'
+        ? aiProviderHint === 'gemini' || modelHint.includes('gemini') || modelHint.includes('imagen')
           ? 'gemini'
-          : aiProviderHint === 'openai'
+          : aiProviderHint === 'openai' || modelHint.includes('gpt') || modelHint.includes('dall')
             ? 'openai'
-            : 'openai'
+            : 'gemini'
         : undefined) ||
       (entityId ? 'ai_task' : undefined);
     const providerPayload: Record<string, any> = {
@@ -659,6 +660,12 @@ class BMWStatusCard extends LitElement {
     );
     let assetMap: Map<string, string> = new Map();
 
+    if ((providerPayload.type === 'gemini' || providerPayload.type === 'openai') && !providerPayload.api_key) {
+      // eslint-disable-next-line no-console
+      console.warn('[bmw-status-card] compositor provider requires api_key:', providerPayload.type);
+      return [];
+    }
+
     try {
       const response = await this.hass.callWS({
         type: 'call_service',
@@ -673,10 +680,20 @@ class BMWStatusCard extends LitElement {
         return_response: true
       });
       const payload = response?.response ?? response?.result ?? response;
-      const items = (payload?.assets || []) as Array<{ name?: string; local_url?: string }>;
+      const items = (payload?.assets || []) as Array<{ name?: string; local_url?: string; error?: string }>;
       items.forEach((item) => {
         if (item?.name && item?.local_url) assetMap.set(String(item.name), String(item.local_url));
       });
+
+      const errored = items.filter((item) => item?.name && item?.error);
+      if (errored.length) {
+        const preview = errored
+          .slice(0, 5)
+          .map((item) => `${item.name}: ${item.error}`)
+          .join(' | ');
+        // eslint-disable-next-line no-console
+        console.warn('[bmw-status-card] image_compositor ensure_assets returned errors:', preview);
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn('[bmw-status-card] image_compositor ensure_assets failed:', err);
@@ -684,7 +701,13 @@ class BMWStatusCard extends LitElement {
     }
 
     const baseImage = compositorDefaults.base_image || assetMap.get('base');
-    if (!baseImage) return [];
+    if (!baseImage) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[bmw-status-card] compositor base asset missing. Check image_compositor service result and provider credentials/model.'
+      );
+      return [];
+    }
 
     const layers = this._buildCompositorLayers(entities, assetMap, compositor);
     const cacheKey = this._hash(JSON.stringify({ baseView, state: this._buildCompositeStateKey(), layers: layers.length }));
@@ -3634,23 +3657,11 @@ class BMWStatusCardEditor extends LitElement {
   private _openAiModelsError?: string;
   private _openAiModelsKey?: string;
   private _openAiModelsTimer?: number;
-  private static _errorHooked = false;
 
   public set hass(hass: HomeAssistant) {
     this._hass = hass;
     this._ensureHaComponents();
     this._loadIntegrationEntities();
-    if (!BMWStatusCardEditor._errorHooked) {
-      BMWStatusCardEditor._errorHooked = true;
-      window.addEventListener('error', (event) => {
-        // eslint-disable-next-line no-console
-        console.error('[bmw-status-card] Window error:', event.error || event.message || event);
-      });
-      window.addEventListener('unhandledrejection', (event) => {
-        // eslint-disable-next-line no-console
-        console.error('[bmw-status-card] Unhandled rejection:', event.reason);
-      });
-    }
   }
 
   public get hass(): HomeAssistant {

@@ -1,8 +1,14 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.73
+Version: 0.1.74
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
+
+## Upgrade-Hinweis (ab 0.1.73)
+
+- Im visuellen Editor unter **Bildmodus → compositor (AI-Overlays)** gibt es jetzt die direkte Provider-Auswahl.
+- Für präzise BMW-Overlays (Türen/Fenster/Haube/Kofferraum) wähle **Compositor Provider: gemini**.
+- **ai_task** bleibt verfügbar, ist aber ohne deterministisches Inpainting.
 
 ![Example Card](Example%20Card.png)
 

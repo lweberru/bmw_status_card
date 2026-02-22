@@ -4553,11 +4553,10 @@ class BMWStatusCardEditor extends LitElement {
       }
 
       if (step === 2) {
-        if (this._compositorWorkflowStep < 2) {
-          this._compositorWorkflowStatus = 'Bitte zuerst Schritt 1 ausführen.';
-          return;
-        }
-        this._compositorWorkflowStatus = 'Schritt 2 läuft: Masken erzeugen…';
+        this._compositorWorkflowStatus =
+          this._compositorWorkflowStep < 2
+            ? 'Schritt 2 läuft: Masken erzeugen mit vorhandenem Base-Bild (oder letztem *_base.png)…'
+            : 'Schritt 2 läuft: Masken erzeugen…';
         const ok = await this._generateCompositorMasks();
         if (!ok) {
           this._compositorWorkflowStatus = this._maskGenerationError || 'Schritt 2 fehlgeschlagen.';
@@ -4929,19 +4928,12 @@ class BMWStatusCardEditor extends LitElement {
                 <div class="actions">
                   <ha-button
                     raised
-                    .disabled=${this._maskGenerationBusy}
-                    @click=${this._generateCompositorMasks}
-                  >${this._maskGenerationBusy ? 'Erzeuge Masken…' : 'Masken automatisch erzeugen'}</ha-button>
-                </div>
-                <div class="actions">
-                  <ha-button
-                    raised
                     .disabled=${this._compositorWorkflowBusy}
                     @click=${() => this._runCompositorWorkflowStep(1)}
                   >1) Base neu erzeugen</ha-button>
                   <ha-button
                     raised
-                    .disabled=${this._compositorWorkflowBusy || this._compositorWorkflowStep < 2}
+                    .disabled=${this._compositorWorkflowBusy}
                     @click=${() => this._runCompositorWorkflowStep(2)}
                   >2) Masken neu erzeugen</ha-button>
                   <ha-button
@@ -4951,7 +4943,8 @@ class BMWStatusCardEditor extends LitElement {
                   >3) Overlays/Compose neu bauen</ha-button>
                 </div>
                 <div class="hint">
-                  Workflow: erst Base, dann Masken, dann Rebuild. Aktueller Schritt: ${this._compositorWorkflowStep}.
+                  Workflow: Base neu erzeugen ist optional. Du kannst Masken direkt mit vorhandenem Base-Bild oder letztem
+                  *_base.png erzeugen. Aktueller Schritt: ${this._compositorWorkflowStep}.
                 </div>
                 ${this._compositorWorkflowStatus ? html`<div class="hint">${this._compositorWorkflowStatus}</div>` : null}
                 <div class="hint">

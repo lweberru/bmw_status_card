@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.79
+Version: 0.1.80
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -113,6 +113,8 @@ image:
     base_view: "front 3/4 view"
     view_mode: "auto" # auto | front_left | rear_right
     scene_entity: "binary_sensor.320d_xdrive_vehicle_motion_state" # optional
+    mask_threshold: 16 # optional, default 16
+    mask_temperature: 0.1 # optional, gemini default for mask generation
     view_prompts:
       front_left: "front 3/4 view"
       rear_right: "rear 3/4 view"

@@ -85,6 +85,7 @@ type ImageCompositorConfig = {
     service_data?: Record<string, any>;
     api_key?: string;
     model?: string;
+    mask_model?: string;
     size?: string;
   };
   base_image?: string;
@@ -93,6 +94,8 @@ type ImageCompositorConfig = {
   asset_path?: string;
   regenerate_request_id?: string;
   mask_base_path?: string;
+  mask_threshold?: number;
+  mask_temperature?: number;
   mask_map?: Record<string, string>;
   scene_entity?: string;
   view_mode?: 'auto' | CompositorView;
@@ -668,6 +671,7 @@ class BMWStatusCard extends LitElement {
       vehicleInfo,
       baseView,
       context.scene,
+      context.view,
       compositorDefaults,
       inplaceMode,
       assetPrefix,
@@ -900,6 +904,7 @@ class BMWStatusCard extends LitElement {
     vehicleInfo: VehicleInfo,
     baseView: string,
     scene: CompositorScene,
+    view: CompositorView,
     compositor: ImageCompositorConfig,
     useInplaceProvider: boolean,
     assetPrefix: string,
@@ -930,20 +935,7 @@ class BMWStatusCard extends LitElement {
       });
     }
 
-    const openingPrompts: Array<{ name: string; description: string }> = [
-      { name: 'door_front_left_open', description: 'front left door open' },
-      { name: 'door_front_right_open', description: 'front right door open' },
-      { name: 'door_rear_left_open', description: 'rear left door open' },
-      { name: 'door_rear_right_open', description: 'rear right door open' },
-      { name: 'window_front_left_open', description: 'front left window open' },
-      { name: 'window_front_right_open', description: 'front right window open' },
-      { name: 'window_rear_left_open', description: 'rear left window open' },
-      { name: 'window_rear_right_open', description: 'rear right window open' },
-      { name: 'hood_open', description: 'hood open' },
-      { name: 'trunk_open', description: 'trunk or tailgate open' },
-      { name: 'sunroof_open', description: 'sunroof open' },
-      { name: 'sunroof_tilt', description: 'sunroof tilted' }
-    ];
+    const openingPrompts = this._getCompositorTargetsForView(view);
 
     openingPrompts.forEach((entry) => {
       const maskUrl = resolveMaskUrl(entry.name);
@@ -976,6 +968,45 @@ class BMWStatusCard extends LitElement {
     });
 
     return assets;
+  }
+
+  private _getCompositorTargetsForView(view: CompositorView): Array<{ name: string; description: string }> {
+    const all: Array<{ name: string; description: string }> = [
+      { name: 'door_front_left_open', description: 'front left door open' },
+      { name: 'door_front_right_open', description: 'front right door open' },
+      { name: 'door_rear_left_open', description: 'rear left door open' },
+      { name: 'door_rear_right_open', description: 'rear right door open' },
+      { name: 'window_front_left_open', description: 'front left window open' },
+      { name: 'window_front_right_open', description: 'front right window open' },
+      { name: 'window_rear_left_open', description: 'rear left window open' },
+      { name: 'window_rear_right_open', description: 'rear right window open' },
+      { name: 'hood_open', description: 'hood open' },
+      { name: 'trunk_open', description: 'trunk or tailgate open' },
+      { name: 'sunroof_open', description: 'sunroof open' },
+      { name: 'sunroof_tilt', description: 'sunroof tilted' }
+    ];
+    if (view === 'rear_right') {
+      const allowed = new Set([
+        'door_front_right_open',
+        'door_rear_right_open',
+        'window_front_right_open',
+        'window_rear_right_open',
+        'trunk_open',
+        'sunroof_open',
+        'sunroof_tilt'
+      ]);
+      return all.filter((item) => allowed.has(item.name));
+    }
+    const allowed = new Set([
+      'door_front_left_open',
+      'door_rear_left_open',
+      'window_front_left_open',
+      'window_rear_left_open',
+      'hood_open',
+      'sunroof_open',
+      'sunroof_tilt'
+    ]);
+    return all.filter((item) => allowed.has(item.name));
   }
 
   private _buildCompositorPrompt(vehicleInfo: VehicleInfo, view: string, scene: CompositorScene): string {
@@ -4361,6 +4392,29 @@ class BMWStatusCardEditor extends LitElement {
     return { scene, view, baseView, assetPath, outputPath, maskBasePath, sceneEntity };
   }
 
+  private _getEditorCompositorTargetsForView(view: CompositorView): Array<Record<string, string>> {
+    if (view === 'rear_right') {
+      return [
+        { name: 'door_front_right_open', description: 'front right door open' },
+        { name: 'door_rear_right_open', description: 'rear right door open' },
+        { name: 'window_front_right_open', description: 'front right window open' },
+        { name: 'window_rear_right_open', description: 'rear right window open' },
+        { name: 'trunk_open', description: 'trunk or tailgate open' },
+        { name: 'sunroof_open', description: 'sunroof open' },
+        { name: 'sunroof_tilt', description: 'sunroof tilted' }
+      ];
+    }
+    return [
+      { name: 'door_front_left_open', description: 'front left door open' },
+      { name: 'door_rear_left_open', description: 'rear left door open' },
+      { name: 'window_front_left_open', description: 'front left window open' },
+      { name: 'window_rear_left_open', description: 'rear left window open' },
+      { name: 'hood_open', description: 'hood open' },
+      { name: 'sunroof_open', description: 'sunroof open' },
+      { name: 'sunroof_tilt', description: 'sunroof tilted' }
+    ];
+  }
+
   private _buildCompositorBasePrompt(view: string, scene: CompositorScene): string {
     const info = this._config?.vehicle_info || {};
     const make = info.make || 'BMW';
@@ -4403,6 +4457,28 @@ class BMWStatusCardEditor extends LitElement {
     const baseView = context.baseView;
     const outputPath = this._toWwwPath(context.maskBasePath, 'www/image_compositor/masks');
     const assetPath = this._toWwwPath(context.assetPath, 'www/image_compositor/assets');
+    const thresholdRaw = Number(compositor.mask_threshold);
+    const threshold = Number.isFinite(thresholdRaw)
+      ? Math.max(1, Math.min(255, Math.round(thresholdRaw)))
+      : 16;
+    const tempRaw = Number(compositor.mask_temperature);
+    const maskTemperature = Number.isFinite(tempRaw)
+      ? Math.max(0, Math.min(2, tempRaw))
+      : 0.1;
+    const providerServiceData =
+      provider.service_data && typeof provider.service_data === 'object'
+        ? { ...provider.service_data }
+        : undefined;
+    if (providerType === 'gemini') {
+      const generationConfig =
+        providerServiceData && typeof providerServiceData.generationConfig === 'object'
+          ? { ...providerServiceData.generationConfig }
+          : {};
+      generationConfig.temperature = maskTemperature;
+      if (providerServiceData) {
+        providerServiceData.generationConfig = generationConfig;
+      }
+    }
 
     try {
       const response = await this.hass.callWS({
@@ -4418,10 +4494,12 @@ class BMWStatusCardEditor extends LitElement {
           provider: {
             type: providerType,
             api_key: provider.api_key,
-            model: provider.model,
+            model: provider.mask_model || provider.model,
             size: provider.size,
-            service_data: provider.service_data
-          }
+            service_data: providerType === 'gemini' ? providerServiceData : provider.service_data
+          },
+          threshold,
+          targets: this._getEditorCompositorTargetsForView(context.view)
         },
         return_response: true
       });
@@ -4743,6 +4821,17 @@ class BMWStatusCardEditor extends LitElement {
                           @input=${this._onValueChanged}
                         ></ha-textfield>
                       </div>
+                      <div class="row">
+                        <ha-textfield
+                          label="Masken-Model (optional, überschreibt Model nur für generate_masks)"
+                          .value=${compositor.provider?.mask_model || ''}
+                          data-path="image.compositor.provider.mask_model"
+                          .placeholder=${compositorProviderType === 'gemini'
+                            ? 'gemini-2.0-flash-preview-image-generation'
+                            : 'gpt-image-1'}
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                      </div>
                       ${compositorProviderType === 'openai'
                         ? html`
                             <div class="row">
@@ -4809,6 +4898,29 @@ class BMWStatusCardEditor extends LitElement {
                     label="Masken-Basispfad (optional)"
                     .value=${compositor.mask_base_path || '/local/image_compositor/masks'}
                     data-path="image.compositor.mask_base_path"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
+                <div class="row">
+                  <ha-textfield
+                    label="Masken-Threshold (Default 16)"
+                    .value=${compositor.mask_threshold ?? ''}
+                    type="number"
+                    min="1"
+                    max="255"
+                    placeholder="16"
+                    data-path="image.compositor.mask_threshold"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                  <ha-textfield
+                    label="Masken-Temperature Gemini (Default 0.1)"
+                    .value=${compositor.mask_temperature ?? ''}
+                    type="number"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    placeholder="0.1"
+                    data-path="image.compositor.mask_temperature"
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>

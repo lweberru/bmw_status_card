@@ -2,7 +2,10 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.78';
+const VERSION = '0.1.79';
+
+type CompositorScene = 'parked' | 'driving';
+type CompositorView = 'front_left' | 'rear_right';
 
 type HassState = {
   entity_id: string;
@@ -91,6 +94,10 @@ type ImageCompositorConfig = {
   regenerate_request_id?: string;
   mask_base_path?: string;
   mask_map?: Record<string, string>;
+  scene_entity?: string;
+  view_mode?: 'auto' | CompositorView;
+  view_prompts?: Partial<Record<CompositorView, string>>;
+  bundle_by_scene_view?: boolean;
   tire_positions?: Partial<Record<'front_left' | 'front_right' | 'rear_left' | 'rear_right', { x: number; y: number }>>;
 };
 
@@ -635,13 +642,16 @@ class BMWStatusCard extends LitElement {
       providerPayload.service_data = provider.service_data || {};
     }
 
-    const baseView = compositor.base_view || 'front 3/4 view';
-    const assetPath = compositor.asset_path || 'www/image_compositor/assets';
-    const outputPath = compositor.output_path || 'www/image_compositor';
+    const context = this._resolveCompositorContext(compositor, entities);
+    const baseView = context.baseView;
+    const assetPath = context.assetPath;
+    const outputPath = context.outputPath;
     const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
     const forceRegenerate = Boolean(regenerateRequestId);
     const inplaceMode = ['openai', 'gemini'].includes(String(providerPayload.type));
-    const assetPrefix = this._buildCompositorAssetPrefix(vehicleInfo);
+    const bundleSuffix = context.bundleBySceneView ? `${context.view}-${context.scene}` : undefined;
+    const assetPrefixBase = this._buildCompositorAssetPrefix(vehicleInfo);
+    const assetPrefix = bundleSuffix ? `${assetPrefixBase}-${bundleSuffix}` : assetPrefixBase;
     const baseStem = `${assetPrefix}_base`;
     const defaultMaskBase = this._normalizeLocalUploadUrl(
       assetPath.replace(/\/$/, '').endsWith('/assets')
@@ -650,12 +660,14 @@ class BMWStatusCard extends LitElement {
     );
     const compositorDefaults: ImageCompositorConfig = {
       ...compositor,
-      mask_base_path: compositor.mask_base_path || defaultMaskBase
+      base_view: baseView,
+      mask_base_path: context.maskBasePath || defaultMaskBase
     };
 
     const assets = this._buildCompositorAssets(
       vehicleInfo,
       baseView,
+      context.scene,
       compositorDefaults,
       inplaceMode,
       assetPrefix,
@@ -717,11 +729,16 @@ class BMWStatusCard extends LitElement {
     const cacheKey = this._hash(
       JSON.stringify({
         baseView,
+        view: context.view,
+        scene: context.scene,
+        assetPath,
+        outputPath,
         state: this._buildCompositeStateKey(),
         layers: layers.length,
         regenerateRequestId: regenerateRequestId || undefined
       })
     );
+    const composeOutputName = `${assetPrefix}_state_${Math.abs(Number(cacheKey) || 0)}.png`;
 
     try {
       const response = await this.hass.callWS({
@@ -732,7 +749,7 @@ class BMWStatusCard extends LitElement {
           base_image: baseImage,
           layers,
           cache_key: cacheKey,
-          output_name: `${cacheKey}.png`,
+          output_name: composeOutputName,
           format: 'png',
           output_path: outputPath
         },
@@ -761,16 +778,135 @@ class BMWStatusCard extends LitElement {
     }
   }
 
+  private _resolveCompositorContext(
+    compositor: ImageCompositorConfig,
+    entities: EntityInfo[]
+  ): {
+    scene: CompositorScene;
+    view: CompositorView;
+    baseView: string;
+    assetPath: string;
+    outputPath: string;
+    maskBasePath: string;
+    bundleBySceneView: boolean;
+  } {
+    const scene = this._resolveCompositorScene(compositor);
+    const view = this._resolveCompositorView(compositor, entities, scene);
+    const baseView = this._resolveCompositorViewPrompt(compositor, view);
+    const bundleBySceneView = compositor.bundle_by_scene_view !== false;
+
+    const assetRoot = compositor.asset_path || 'www/image_compositor/assets';
+    const outputRoot = compositor.output_path || 'www/image_compositor';
+    const maskRoot = compositor.mask_base_path || '/local/image_compositor/masks';
+
+    const suffix = bundleBySceneView ? [view, scene] : [];
+    const assetPath = suffix.reduce((acc, part) => this._appendPathSegment(acc, part), assetRoot);
+    const outputPath = suffix.reduce((acc, part) => this._appendPathSegment(acc, part), outputRoot);
+    const maskBasePath = suffix.reduce((acc, part) => this._appendPathSegment(acc, part), maskRoot);
+
+    return { scene, view, baseView, assetPath, outputPath, maskBasePath, bundleBySceneView };
+  }
+
+  private _resolveCompositorScene(compositor: ImageCompositorConfig): CompositorScene {
+    const configured = this._normalizeEntityId(compositor.scene_entity);
+    const statusEntity = this._normalizeEntityId(this._statusEntities?.motion);
+    const entityId = configured || statusEntity;
+    const state = entityId ? this.hass?.states[entityId]?.state : this._getVehicleStatusLabel();
+    return this._mapStateToCompositorScene(state, entityId);
+  }
+
+  private _mapStateToCompositorScene(state?: string, entityId?: string): CompositorScene {
+    if (!state) return 'parked';
+    const normalized = this._normalizeText(state);
+    if (entityId && this._isMotionStateBinarySensor(entityId)) {
+      if (['on', 'true', '1', 'yes'].includes(normalized)) return 'driving';
+      if (['off', 'false', '0', 'no'].includes(normalized)) return 'parked';
+    }
+    if (
+      normalized.includes('driving') ||
+      normalized.includes('fahrt') ||
+      normalized.includes('moving') ||
+      normalized.includes('motion')
+    ) {
+      return 'driving';
+    }
+    return 'parked';
+  }
+
+  private _resolveCompositorView(
+    compositor: ImageCompositorConfig,
+    entities: EntityInfo[],
+    scene: CompositorScene
+  ): CompositorView {
+    if (compositor.view_mode === 'front_left' || compositor.view_mode === 'rear_right') {
+      return compositor.view_mode;
+    }
+
+    let frontScore = 0;
+    let rearScore = 0;
+    const openingEntities = this._pickEntities(entities, new Set(), ['binary_sensor', 'sensor', 'cover'], [
+      'door',
+      'window',
+      'trunk',
+      'tailgate',
+      'boot',
+      'hood',
+      'bonnet',
+      'sunroof',
+      'roof',
+      'tür',
+      'fenster',
+      'kofferraum',
+      'heckklappe',
+      'motorhaube',
+      'schiebedach'
+    ]);
+
+    openingEntities.forEach((entityId) => {
+      if (this._isDoorOverallEntity(entityId)) return;
+      const state = this.hass?.states[entityId]?.state;
+      if (!state || !this._isOpenState(state)) return;
+      const key = this._getOpeningAssetKey(entityId, this._getSunroofState(entityId, state), true);
+      if (!key) return;
+      if (key.includes('rear_') || key === 'trunk_open') {
+        rearScore += 1;
+      } else if (key.includes('front_') || key === 'hood_open') {
+        frontScore += 1;
+      }
+    });
+
+    if (rearScore > frontScore) return 'rear_right';
+    if (frontScore > rearScore) return 'front_left';
+    return scene === 'driving' ? 'rear_right' : 'front_left';
+  }
+
+  private _resolveCompositorViewPrompt(compositor: ImageCompositorConfig, view: CompositorView): string {
+    const prompts = compositor.view_prompts || {};
+    const configured = (prompts[view] || '').trim();
+    if (configured) return configured;
+    if (view === 'rear_right') return 'rear 3/4 view';
+    return compositor.base_view || 'front 3/4 view';
+  }
+
+  private _appendPathSegment(base: string, segment: string): string {
+    const left = String(base || '').trim().replace(/\/+$/, '');
+    const right = String(segment || '').trim().replace(/^\/+|\/+$/g, '');
+    if (!left) return right;
+    if (!right) return left;
+    return `${left}/${right}`;
+  }
+
   private _buildCompositorAssets(
     vehicleInfo: VehicleInfo,
     baseView: string,
+    scene: CompositorScene,
     compositor: ImageCompositorConfig,
     useInplaceProvider: boolean,
     assetPrefix: string,
     baseStem: string
   ): Array<Record<string, any>> {
     const assets: Array<Record<string, any>> = [];
-    const basePrompt = this._buildCompositorPrompt(vehicleInfo, baseView);
+    const basePrompt = this._buildCompositorPrompt(vehicleInfo, baseView, scene);
     const baseImage = compositor.base_image;
     const maskBase = (this._normalizeLocalUploadUrl(compositor.mask_base_path) || compositor.mask_base_path || '').replace(
       /\/$/,
@@ -842,7 +978,7 @@ class BMWStatusCard extends LitElement {
     return assets;
   }
 
-  private _buildCompositorPrompt(vehicleInfo: VehicleInfo, view: string): string {
+  private _buildCompositorPrompt(vehicleInfo: VehicleInfo, view: string, scene: CompositorScene): string {
     const tokens: Record<string, string> = {
       '{make}': vehicleInfo.make || 'BMW',
       '{model}': vehicleInfo.model || '',
@@ -862,6 +998,16 @@ class BMWStatusCard extends LitElement {
 
     if (view && !defaultAiTemplate.includes('{angle}')) {
       prompt = `${prompt} ${view}`;
+    }
+
+    prompt =
+      scene === 'driving'
+        ? `${prompt} driving on road, dynamic but realistic environment, car remains sharp`
+        : `${prompt} parked in a realistic static environment`;
+
+    const plate = (vehicleInfo.license_plate || '').trim();
+    if (plate) {
+      prompt = `${prompt} license plate text: ${plate}`;
     }
 
     return prompt.replace(/\s+/g, ' ').trim();
@@ -4136,7 +4282,86 @@ class BMWStatusCardEditor extends LitElement {
     return `www/${raw.replace(/^\/+/, '')}`;
   }
 
-  private _buildCompositorBasePrompt(view: string): string {
+  private _normalizeText(value: string): string {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private _appendPathSegment(base: string, segment: string): string {
+    const left = String(base || '').trim().replace(/\/+$/, '');
+    const right = String(segment || '').trim().replace(/^\/+|\/+$/g, '');
+    if (!left) return right;
+    if (!right) return left;
+    return `${left}/${right}`;
+  }
+
+  private _mapEditorStateToScene(state?: string, entityId?: string): CompositorScene {
+    if (!state) return 'parked';
+    const normalized = this._normalizeText(state);
+    if (entityId && entityId.startsWith('binary_sensor.')) {
+      if (['on', 'true', '1', 'yes'].includes(normalized)) return 'driving';
+      if (['off', 'false', '0', 'no'].includes(normalized)) return 'parked';
+    }
+    if (
+      normalized.includes('driving') ||
+      normalized.includes('fahrt') ||
+      normalized.includes('moving') ||
+      normalized.includes('motion')
+    ) {
+      return 'driving';
+    }
+    return 'parked';
+  }
+
+  private _resolveEditorCompositorContext(compositor: ImageCompositorConfig): {
+    scene: CompositorScene;
+    view: CompositorView;
+    baseView: string;
+    assetPath: string;
+    outputPath: string;
+    maskBasePath: string;
+    sceneEntity?: string;
+  } {
+    const configuredSceneEntity = this._normalizeEntityId(compositor.scene_entity);
+    const autoSceneEntity = configuredSceneEntity
+      ? undefined
+      : Object.keys(this.hass?.states || {}).find((entityId) =>
+          this._normalizeText(entityId).includes('vehicle motion state')
+        );
+    const sceneEntity = configuredSceneEntity || autoSceneEntity;
+    const sceneState = sceneEntity ? this.hass?.states[sceneEntity]?.state : undefined;
+    const scene = this._mapEditorStateToScene(sceneState, sceneEntity);
+    const view = compositor.view_mode === 'rear_right'
+      ? 'rear_right'
+      : compositor.view_mode === 'front_left'
+        ? 'front_left'
+        : scene === 'driving'
+          ? 'rear_right'
+          : 'front_left';
+    const baseView = (compositor.view_prompts?.[view] || (view === 'rear_right' ? 'rear 3/4 view' : compositor.base_view || 'front 3/4 view')).trim();
+    const bundleBySceneView = compositor.bundle_by_scene_view !== false;
+    const suffix = bundleBySceneView ? [view, scene] : [];
+    const assetPath = suffix.reduce(
+      (acc, part) => this._appendPathSegment(acc, part),
+      compositor.asset_path || 'www/image_compositor/assets'
+    );
+    const outputPath = suffix.reduce(
+      (acc, part) => this._appendPathSegment(acc, part),
+      compositor.output_path || 'www/image_compositor'
+    );
+    const maskBasePath = suffix.reduce(
+      (acc, part) => this._appendPathSegment(acc, part),
+      compositor.mask_base_path || '/local/image_compositor/masks'
+    );
+    return { scene, view, baseView, assetPath, outputPath, maskBasePath, sceneEntity };
+  }
+
+  private _buildCompositorBasePrompt(view: string, scene: CompositorScene): string {
     const info = this._config?.vehicle_info || {};
     const make = info.make || 'BMW';
     const model = info.model || '';
@@ -4145,7 +4370,11 @@ class BMWStatusCardEditor extends LitElement {
     const series = info.series || '';
     const trim = info.trim || '';
     const body = info.body || '';
-    return `High-quality photo of a ${year} ${color} ${make} ${model} ${series} ${trim} ${body}, ${view}, clean studio background.`
+    const sceneHint =
+      scene === 'driving'
+        ? 'driving on road, slight motion context, no heavy blur'
+        : 'parked scene, realistic parking environment';
+    return `High-quality photo of a ${year} ${color} ${make} ${model} ${series} ${trim} ${body}, ${view}, ${sceneHint}.`
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -4170,9 +4399,10 @@ class BMWStatusCardEditor extends LitElement {
     this._maskPreviews = [];
     this.requestUpdate();
 
-    const baseView = compositor.base_view || 'front 3/4 view';
-    const outputPath = this._toWwwPath(compositor.mask_base_path, 'www/image_compositor/masks');
-    const assetPath = this._toWwwPath(compositor.asset_path, 'www/image_compositor/assets');
+    const context = this._resolveEditorCompositorContext(compositor);
+    const baseView = context.baseView;
+    const outputPath = this._toWwwPath(context.maskBasePath, 'www/image_compositor/masks');
+    const assetPath = this._toWwwPath(context.assetPath, 'www/image_compositor/assets');
 
     try {
       const response = await this.hass.callWS({
@@ -4184,7 +4414,7 @@ class BMWStatusCardEditor extends LitElement {
           asset_path: assetPath,
           base_image: baseImageOverride || compositor.base_image,
           base_view: baseView,
-          base_prompt: this._buildCompositorBasePrompt(baseView),
+          base_prompt: this._buildCompositorBasePrompt(baseView, context.scene),
           provider: {
             type: providerType,
             api_key: provider.api_key,
@@ -4222,66 +4452,6 @@ class BMWStatusCardEditor extends LitElement {
     }
   }
 
-  private async _generateCompositorBaseAsset(): Promise<string | undefined> {
-    if (!this.hass || !this._config?.image?.compositor) return undefined;
-    const compositor = this._config.image.compositor || {};
-    const provider = compositor.provider || {};
-    const providerType = provider.type || (provider.api_key ? 'gemini' : 'ai_task');
-
-    if (!(providerType === 'gemini' || providerType === 'openai')) {
-      this._compositorWorkflowStatus = 'Schritt 1 fehlgeschlagen: Provider muss gemini/openai sein.';
-      return undefined;
-    }
-    if (!provider.api_key) {
-      this._compositorWorkflowStatus = 'Schritt 1 fehlgeschlagen: Provider API Key fehlt.';
-      return undefined;
-    }
-
-    const baseView = compositor.base_view || 'front 3/4 view';
-    const assetPath = this._toWwwPath(compositor.asset_path, 'www/image_compositor/assets');
-
-    try {
-      const response = await this.hass.callWS({
-        type: 'call_service',
-        domain: 'image_compositor',
-        service: 'ensure_assets',
-        service_data: {
-          output_path: assetPath,
-          force: true,
-          provider: {
-            type: providerType,
-            api_key: provider.api_key,
-            model: provider.model,
-            size: provider.size,
-            service_data: provider.service_data
-          },
-          assets: [
-            {
-              name: 'workflow_base',
-              filename: 'workflow_base.png',
-              prompt: this._buildCompositorBasePrompt(baseView),
-              format: 'png',
-              attempts: 2
-            }
-          ]
-        },
-        return_response: true
-      });
-      const payload = response?.response ?? response?.result ?? response;
-      const items = (payload?.assets || []) as Array<{ local_url?: string; error?: string }>;
-      const first = items[0];
-      if (!first || first.error || !first.local_url) {
-        this._compositorWorkflowStatus = `Schritt 1 fehlgeschlagen: ${first?.error || 'kein Base-Bild erzeugt'}`;
-        return undefined;
-      }
-      this._setConfigValue('image.compositor.base_image', String(first.local_url));
-      return String(first.local_url);
-    } catch (err: any) {
-      this._compositorWorkflowStatus = `Schritt 1 fehlgeschlagen: ${err?.message || String(err)}`;
-      return undefined;
-    }
-  }
-
   private async _runCompositorWorkflowStep(step: 1 | 2 | 3): Promise<void> {
     if (!this.hass || !this._config?.image?.compositor) return;
     if (this._compositorWorkflowBusy) return;
@@ -4290,11 +4460,15 @@ class BMWStatusCardEditor extends LitElement {
 
     try {
       if (step === 1) {
-        this._compositorWorkflowStatus = 'Schritt 1 läuft: Base neu erzeugen…';
-        const baseUrl = await this._generateCompositorBaseAsset();
-        if (!baseUrl) return;
+        const context = this._resolveEditorCompositorContext(this._config.image?.compositor || {});
+        this._compositorWorkflowStatus = `Schritt 1 läuft: Base-Neuaufbau für ${context.view}/${context.scene} angestoßen…`;
+        if (this._config.image?.compositor?.base_image?.includes('workflow_base')) {
+          this._setConfigValue('image.compositor.base_image', undefined);
+        }
+        this._setConfigValue('image.compositor.regenerate_request_id', String(Date.now()));
         this._compositorWorkflowStep = 2;
-        this._compositorWorkflowStatus = 'Schritt 1 erfolgreich. Als Nächstes: Masken erzeugen.';
+        this._compositorWorkflowStatus =
+          `Schritt 1 angestoßen. Kurz warten, bis ein neues *_base.png unter ${context.assetPath} vorhanden ist; dann Schritt 2.`;
         return;
       }
 
@@ -4304,8 +4478,7 @@ class BMWStatusCardEditor extends LitElement {
           return;
         }
         this._compositorWorkflowStatus = 'Schritt 2 läuft: Masken erzeugen…';
-        const baseImage = this._config.image?.compositor?.base_image;
-        const ok = await this._generateCompositorMasks(baseImage);
+        const ok = await this._generateCompositorMasks();
         if (!ok) {
           this._compositorWorkflowStatus = this._maskGenerationError || 'Schritt 2 fehlgeschlagen.';
           return;
@@ -4347,6 +4520,7 @@ class BMWStatusCardEditor extends LitElement {
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
     const compositor = this._config.image?.compositor || {};
+    const compositorContext = this._resolveEditorCompositorContext(compositor);
     const compositorProviderType =
       compositor.provider?.type ||
       (compositor.provider?.api_key ? 'gemini' : compositor.provider?.entity_id ? 'ai_task' : 'gemini');
@@ -4494,10 +4668,58 @@ class BMWStatusCardEditor extends LitElement {
                     </select>
                   </div>
                   <ha-textfield
-                    label="Basis-Ansicht (optional)"
+                    label="Basis-Ansicht Front (Fallback)"
                     .value=${compositor.base_view || ''}
                     data-path="image.compositor.base_view"
                     placeholder="front 3/4 view"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
+                <div class="row">
+                  <div class="field">
+                    <label class="hint">Bundle-Modus (View + Szene)</label>
+                    <ha-switch
+                      .checked=${compositor.bundle_by_scene_view !== false}
+                      data-path="image.compositor.bundle_by_scene_view"
+                      @change=${this._onToggleChanged}
+                    ></ha-switch>
+                  </div>
+                  <div class="field">
+                    <label class="hint">View-Auswahl</label>
+                    <select
+                      data-path="image.compositor.view_mode"
+                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                      .value=${compositor.view_mode || 'auto'}
+                    >
+                      <option value="auto">auto</option>
+                      <option value="front_left">front_left</option>
+                      <option value="rear_right">rear_right</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row">
+                  <ha-textfield
+                    label="View-Prompt front_left (optional)"
+                    .value=${compositor.view_prompts?.front_left || ''}
+                    data-path="image.compositor.view_prompts.front_left"
+                    placeholder="front 3/4 view"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                  <div class="field">
+                    <label class="hint">Motion-State Entity (optional)</label>
+                    <ha-entity-picker
+                      .hass=${this.hass}
+                      .value=${compositor.scene_entity || ''}
+                      data-path="image.compositor.scene_entity"
+                      @value-changed=${this._onSelectChanged}
+                      allow-custom-entity
+                    ></ha-entity-picker>
+                  </div>
+                  <ha-textfield
+                    label="View-Prompt rear_right (optional)"
+                    .value=${compositor.view_prompts?.rear_right || ''}
+                    data-path="image.compositor.view_prompts.rear_right"
+                    placeholder="rear 3/4 view"
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>
@@ -4569,6 +4791,10 @@ class BMWStatusCardEditor extends LitElement {
                     data-path="image.compositor.output_path"
                     @input=${this._onValueChanged}
                   ></ha-textfield>
+                </div>
+                <div class="hint">
+                  Aktiv: Szene <strong>${compositorContext.scene}</strong>, View <strong>${compositorContext.view}</strong>,
+                  Asset-Pfad <strong>${compositorContext.assetPath}</strong>, Masken-Pfad <strong>${compositorContext.maskBasePath}</strong>.
                 </div>
                 <div class="row">
                   <ha-textfield

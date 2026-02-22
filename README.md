@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.78
+Version: 0.1.79
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -9,6 +9,8 @@ Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata
 - Im visuellen Editor unter **Bildmodus → compositor (AI-Overlays)** gibt es jetzt die direkte Provider-Auswahl.
 - Für präzise BMW-Overlays (Türen/Fenster/Haube/Kofferraum) wähle **Compositor Provider: gemini**.
 - **ai_task** bleibt verfügbar, ist aber ohne deterministisches Inpainting.
+- Neu: Standardmäßig werden im Compositor getrennte Bundles für **View + Szene** genutzt
+  (`front_left|rear_right` × `parked|driving`). Dadurch bleiben Base/Masken/Overlays je Kontext stabil.
 
 ![Example Card](Example%20Card.png)
 
@@ -109,6 +111,12 @@ image:
       api_key: !secret gemini_api_key
       model: gemini-2.0-flash-preview-image-generation
     base_view: "front 3/4 view"
+    view_mode: "auto" # auto | front_left | rear_right
+    scene_entity: "binary_sensor.320d_xdrive_vehicle_motion_state" # optional
+    view_prompts:
+      front_left: "front 3/4 view"
+      rear_right: "rear 3/4 view"
+    bundle_by_scene_view: true
     asset_path: "www/image_compositor/assets"
     output_path: "www/image_compositor"
     mask_base_path: "/local/image_compositor/masks"
@@ -173,6 +181,8 @@ Im Karten-Editor unter **Bildmodus → compositor (AI-Overlays)** sind jetzt all
 Hinweis:
 - Für präzise, deckungsgleiche BMW-Overlays nutze `gemini` oder `openai` (Inpainting).
 - `ai_task` ist weiterhin möglich, aber ohne deterministisches Inpainting.
+- Mit `bundle_by_scene_view: true` schreibt die Karte automatisch nach
+  `.../assets/<view>/<scene>`, `.../masks/<view>/<scene>` und `.../<view>/<scene>` für Compose-Ausgaben.
 
 ### Overrides für vehicle-status-card
 

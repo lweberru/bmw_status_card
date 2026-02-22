@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.72';
+const VERSION = '0.1.73';
 
 type HassState = {
   entity_id: string;
@@ -4061,6 +4061,9 @@ class BMWStatusCardEditor extends LitElement {
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
     const compositor = this._config.image?.compositor || {};
+    const compositorProviderType =
+      compositor.provider?.type ||
+      (compositor.provider?.api_key ? 'gemini' : compositor.provider?.entity_id ? 'ai_task' : 'gemini');
     const aiProvider = ai.provider || 'ha_ai_task';
     const aiTaskOptions = (this._aiTaskEntities || []).filter((entityId) => entityId.startsWith('ai_task.'));
     const aiTaskRaw =
@@ -4193,15 +4196,16 @@ class BMWStatusCardEditor extends LitElement {
             ? html`
                 <div class="row">
                   <div class="field">
-                    <label class="hint">ai_task Entity (optional)</label>
-                    <ha-entity-picker
-                      .hass=${this.hass}
-                      .value=${compositor.provider?.entity_id || ''}
-                      .includeEntities=${aiTaskOptions}
-                      data-path="image.compositor.provider.entity_id"
-                      @value-changed=${this._onSelectChanged}
-                      allow-custom-entity
-                    ></ha-entity-picker>
+                    <label class="hint">Compositor Provider</label>
+                    <select
+                      data-path="image.compositor.provider.type"
+                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                      .value=${compositorProviderType}
+                    >
+                      <option value="gemini">Gemini (empfohlen für Inpainting)</option>
+                      <option value="openai">OpenAI (Inpainting)</option>
+                      <option value="ai_task">Home Assistant ai_task (ohne Inpainting)</option>
+                    </select>
                   </div>
                   <ha-textfield
                     label="Basis-Ansicht (optional)"
@@ -4211,6 +4215,61 @@ class BMWStatusCardEditor extends LitElement {
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>
+
+                ${compositorProviderType === 'gemini' || compositorProviderType === 'openai'
+                  ? html`
+                      <div class="row">
+                        <ha-textfield
+                          label="Provider API Key"
+                          .value=${compositor.provider?.api_key || ''}
+                          data-path="image.compositor.provider.api_key"
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                        <ha-textfield
+                          label="Model (optional)"
+                          .value=${compositor.provider?.model || ''}
+                          data-path="image.compositor.provider.model"
+                          .placeholder=${compositorProviderType === 'gemini'
+                            ? 'gemini-2.5-flash-image-preview'
+                            : 'gpt-image-1'}
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                      </div>
+                      ${compositorProviderType === 'openai'
+                        ? html`
+                            <div class="row">
+                              <div class="field">
+                                <label class="hint">Bildgröße (OpenAI)</label>
+                                <select
+                                  data-path="image.compositor.provider.size"
+                                  @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                                  .value=${compositor.provider?.size || '1024x1024'}
+                                >
+                                  <option value="1024x1024">1024x1024</option>
+                                  <option value="1792x1024">1792x1024</option>
+                                  <option value="1024x1792">1024x1792</option>
+                                </select>
+                              </div>
+                            </div>
+                          `
+                        : null}
+                    `
+                  : html`
+                      <div class="row">
+                        <div class="field">
+                          <label class="hint">ai_task Entity</label>
+                          <ha-entity-picker
+                            .hass=${this.hass}
+                            .value=${compositor.provider?.entity_id || ''}
+                            .includeEntities=${aiTaskOptions}
+                            data-path="image.compositor.provider.entity_id"
+                            @value-changed=${this._onSelectChanged}
+                            allow-custom-entity
+                          ></ha-entity-picker>
+                        </div>
+                      </div>
+                    `}
+
                 <div class="row">
                   <ha-textfield
                     label="Asset-Pfad (optional)"
@@ -4225,8 +4284,17 @@ class BMWStatusCardEditor extends LitElement {
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>
+                <div class="row">
+                  <ha-textfield
+                    label="Masken-Basispfad (optional)"
+                    .value=${compositor.mask_base_path || '/local/image_compositor/masks'}
+                    data-path="image.compositor.mask_base_path"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
                 <div class="hint">
-                  Nutzt <strong>image_compositor</strong> und <strong>ai_task</strong>, um Basisbild + Overlays zu erzeugen und zu cachen.
+                  Für exakt ausgerichtete BMW-Overlays nutze <strong>Gemini</strong> oder <strong>OpenAI</strong> (Inpainting).
+                  <strong>ai_task</strong> ist möglich, aber ohne deterministisches Inpainting.
                 </div>
               `
             : null}

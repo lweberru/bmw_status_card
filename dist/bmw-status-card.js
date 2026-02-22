@@ -150,7 +150,7 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
       color: var(--primary-text-color);
       font-size: 14px;
     }
-  `}_setEditorError(e){const t=e instanceof Error?`${e.message}\n${e.stack||""}`:String(e);this._editorError=t,console.error("[bmw-status-card] Editor error:",e)}_emitConfigChanged(){if(!this._config)return;const e={...this._config,type:this._config.type||`custom:${le}`};try{console.debug("[bmw-status-card] config-changed",e),this.dispatchEvent(new CustomEvent("config-changed",{detail:{config:e},bubbles:!0,composed:!0})),this._editorError=void 0}catch(e){this._setEditorError(e)}}_setConfigValue(e,t){if(this._config)try{const i=e.split("."),s=[];let a={...this._config},n=a;for(let e=0;e<i.length-1;e+=1){const t=i[e];s.push({parent:n,key:t}),n[t]={...n[t]||{}},n=n[t]}const r=i[i.length-1];""===t||null==t?delete n[r]:n[r]=t,"image.ai.generate_request_id"!==e&&a.image?.ai?.generate_request_id&&delete a.image.ai.generate_request_id;for(let e=s.length-1;e>=0;e-=1){const{parent:t,key:i}=s[e];t[i]&&0===Object.keys(t[i]).length&&delete t[i]}this._config=a,this._emitConfigChanged(),this._maybeLoadGeminiModels(e,t),this._maybeLoadOpenAiModels(e,t)}catch(e){this._setEditorError(e)}}_onValueChanged(e){const t=e.target,i=t?.dataset?.path;i&&this._setConfigValue(i,t.value)}_onImageModeChanged(e){const t=e.currentTarget,i=e.detail?.value??t?.value;if(!i||!["off","static","ai","cardata","compositor"].includes(i))return;if(console.debug("[bmw-status-card] image mode changed:",i),!this._config)return;const s={...this._config};"off"===i?delete s.image:s.image="static"===i?{...s.image||{},mode:"static",static_urls:s.image?.static_urls||[]}:"cardata"===i?{...s.image||{},mode:"cardata"}:"compositor"===i?{...s.image||{},mode:"compositor",compositor:s.image?.compositor||{}}:{...s.image||{},mode:"ai",ai:s.image?.ai||{}},this._config=s,this._emitConfigChanged()}_onSelectChanged(e){const t=e.currentTarget,i=t?.dataset?.path;if(!i)return;const s=e.detail?.value??t?.value;this._setConfigValue(i,s)}_normalizeEntityId(e){if(!e)return;if(Array.isArray(e)){const t=e.length?String(e[0]).trim():"";return this._normalizeEntityId(t)}if("object"==typeof e){const t=e.entity_id??e.entityId;return this._normalizeEntityId(t)}const t=String(e).trim();if(t){if(t.includes(",")){const e=t.split(",")[0].trim();return this._normalizeEntityId(e)}if(t.includes(".")&&!/\s/.test(t))return t}}_onToggleChanged(e){const t=e.currentTarget,i=t?.dataset?.path;i&&this._setConfigValue(i,Boolean(t?.checked))}_maybeLoadGeminiModels(e,t){if("gemini"!==(this._config?.image?.ai?.provider||"openai"))return;const i=String("image.ai.api_key"===e?t||"":this._config?.image?.ai?.api_key||"");!i||i.length<20||this._geminiModelsLoading||this._geminiModelsKey===i&&this._geminiModels?.length||(this._geminiModelsTimer&&window.clearTimeout(this._geminiModelsTimer),this._geminiModelsTimer=window.setTimeout(()=>{this._loadGeminiModels(i)},400))}_maybeLoadOpenAiModels(e,t){if("openai"!==(this._config?.image?.ai?.provider||"openai"))return;const i=String("image.ai.api_key"===e?t||"":this._config?.image?.ai?.api_key||"");!i||i.length<20||this._openAiModelsLoading||this._openAiModelsKey===i&&this._openAiModels?.length||(this._openAiModelsTimer&&window.clearTimeout(this._openAiModelsTimer),this._openAiModelsTimer=window.setTimeout(()=>{this._loadOpenAiModels(i)},400))}async _loadOpenAiModels(e){this._openAiModelsLoading=!0,this._openAiModelsError=void 0,this._openAiModelsKey=e;try{const t=await fetch("https://api.openai.com/v1/models",{headers:{Authorization:`Bearer ${e}`}});if(!t.ok){const e=await t.text();throw new Error(`OpenAI ListModels Fehler: ${t.status} ${e}`)}const i=await t.json(),s=(i?.data||[]).map(e=>e.id||"").filter(Boolean).filter(e=>/(image|dall-e|gpt-image)/i.test(e)).sort();this._openAiModels=s}catch(e){this._openAiModelsError=e?.message||String(e),this._openAiModels=void 0,console.warn("[bmw-status-card] OpenAI ListModels fehlgeschlagen:",e)}finally{this._openAiModelsLoading=!1,this.requestUpdate()}}async _loadGeminiModels(e){this._geminiModelsLoading=!0,this._geminiModelsError=void 0,this._geminiModelsKey=e;try{const t=await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${e}`);if(!t.ok){const e=await t.text();throw new Error(`ListModels Fehler: ${t.status} ${e}`)}const i=await t.json(),s=(i?.models||[]).filter(e=>(e.supportedGenerationMethods||[]).includes("generateContent")).map(e=>e.name||"").filter(Boolean).map(e=>e.replace(/^models\//,"")).filter(Boolean).sort();this._geminiModels=s}catch(e){this._geminiModelsError=e?.message||String(e),this._geminiModels=void 0,console.warn("[bmw-status-card] Gemini ListModels fehlgeschlagen:",e)}finally{this._geminiModelsLoading=!1,this.requestUpdate()}}_onListChanged(e){const t=e.target,i=t?.dataset?.path;if(!i)return;const s=(t.value||"").split(",").map(e=>e.trim()).filter(Boolean);this._setConfigValue(i,s.length?s:void 0)}async _resolveDeviceIdFromEntity(e,t){if(this.hass)try{const i=await this.hass.callWS({type:"config/entity_registry/get",entity_id:e});i?.device_id&&this._setConfigValue(t,i.device_id)}catch(e){}}async _onEntityPicked(e){const t=e.target,i=e.detail?.value??t?.value,s=t?.dataset?.target;i&&s&&("bmw_home_device_id"===s?this._bmwHomeEntity=i:"bmw_cardata_device_id"===s&&(this._bmwCardataEntity=i),await this._resolveDeviceIdFromEntity(i,s))}render(){if(!this._config)return j``;const e=this._config.image?.mode||"off",t=this._config.image?.ai||{},i=this._config.image?.compositor||{},s=t.provider||"ha_ai_task",a=(this._aiTaskEntities||[]).filter(e=>e.startsWith("ai_task.")),n=t.ha_entity_id||t.entity_id||t.ai_task_entity||t.entity||t.task_entity,r=this._normalizeEntityId(n)||("string"==typeof n?n.trim():"")||"",o=r&&!a.includes(r)?[r,...a]:a,l=!1!==t.generate_on_demand,c=t.upload??("openai"===s||"gemini"===s||"ha_ai_task"===s);try{return j`
+  `}_setEditorError(e){const t=e instanceof Error?`${e.message}\n${e.stack||""}`:String(e);this._editorError=t,console.error("[bmw-status-card] Editor error:",e)}_emitConfigChanged(){if(!this._config)return;const e={...this._config,type:this._config.type||`custom:${le}`};try{console.debug("[bmw-status-card] config-changed",e),this.dispatchEvent(new CustomEvent("config-changed",{detail:{config:e},bubbles:!0,composed:!0})),this._editorError=void 0}catch(e){this._setEditorError(e)}}_setConfigValue(e,t){if(this._config)try{const i=e.split("."),s=[];let a={...this._config},n=a;for(let e=0;e<i.length-1;e+=1){const t=i[e];s.push({parent:n,key:t}),n[t]={...n[t]||{}},n=n[t]}const r=i[i.length-1];""===t||null==t?delete n[r]:n[r]=t,"image.ai.generate_request_id"!==e&&a.image?.ai?.generate_request_id&&delete a.image.ai.generate_request_id;for(let e=s.length-1;e>=0;e-=1){const{parent:t,key:i}=s[e];t[i]&&0===Object.keys(t[i]).length&&delete t[i]}this._config=a,this._emitConfigChanged(),this._maybeLoadGeminiModels(e,t),this._maybeLoadOpenAiModels(e,t)}catch(e){this._setEditorError(e)}}_onValueChanged(e){const t=e.target,i=t?.dataset?.path;i&&this._setConfigValue(i,t.value)}_onImageModeChanged(e){const t=e.currentTarget,i=e.detail?.value??t?.value;if(!i||!["off","static","ai","cardata","compositor"].includes(i))return;if(console.debug("[bmw-status-card] image mode changed:",i),!this._config)return;const s={...this._config};"off"===i?delete s.image:s.image="static"===i?{...s.image||{},mode:"static",static_urls:s.image?.static_urls||[]}:"cardata"===i?{...s.image||{},mode:"cardata"}:"compositor"===i?{...s.image||{},mode:"compositor",compositor:s.image?.compositor||{}}:{...s.image||{},mode:"ai",ai:s.image?.ai||{}},this._config=s,this._emitConfigChanged()}_onSelectChanged(e){const t=e.currentTarget,i=t?.dataset?.path;if(!i)return;const s=e.detail?.value??t?.value;this._setConfigValue(i,s)}_normalizeEntityId(e){if(!e)return;if(Array.isArray(e)){const t=e.length?String(e[0]).trim():"";return this._normalizeEntityId(t)}if("object"==typeof e){const t=e.entity_id??e.entityId;return this._normalizeEntityId(t)}const t=String(e).trim();if(t){if(t.includes(",")){const e=t.split(",")[0].trim();return this._normalizeEntityId(e)}if(t.includes(".")&&!/\s/.test(t))return t}}_onToggleChanged(e){const t=e.currentTarget,i=t?.dataset?.path;i&&this._setConfigValue(i,Boolean(t?.checked))}_maybeLoadGeminiModels(e,t){if("gemini"!==(this._config?.image?.ai?.provider||"openai"))return;const i=String("image.ai.api_key"===e?t||"":this._config?.image?.ai?.api_key||"");!i||i.length<20||this._geminiModelsLoading||this._geminiModelsKey===i&&this._geminiModels?.length||(this._geminiModelsTimer&&window.clearTimeout(this._geminiModelsTimer),this._geminiModelsTimer=window.setTimeout(()=>{this._loadGeminiModels(i)},400))}_maybeLoadOpenAiModels(e,t){if("openai"!==(this._config?.image?.ai?.provider||"openai"))return;const i=String("image.ai.api_key"===e?t||"":this._config?.image?.ai?.api_key||"");!i||i.length<20||this._openAiModelsLoading||this._openAiModelsKey===i&&this._openAiModels?.length||(this._openAiModelsTimer&&window.clearTimeout(this._openAiModelsTimer),this._openAiModelsTimer=window.setTimeout(()=>{this._loadOpenAiModels(i)},400))}async _loadOpenAiModels(e){this._openAiModelsLoading=!0,this._openAiModelsError=void 0,this._openAiModelsKey=e;try{const t=await fetch("https://api.openai.com/v1/models",{headers:{Authorization:`Bearer ${e}`}});if(!t.ok){const e=await t.text();throw new Error(`OpenAI ListModels Fehler: ${t.status} ${e}`)}const i=await t.json(),s=(i?.data||[]).map(e=>e.id||"").filter(Boolean).filter(e=>/(image|dall-e|gpt-image)/i.test(e)).sort();this._openAiModels=s}catch(e){this._openAiModelsError=e?.message||String(e),this._openAiModels=void 0,console.warn("[bmw-status-card] OpenAI ListModels fehlgeschlagen:",e)}finally{this._openAiModelsLoading=!1,this.requestUpdate()}}async _loadGeminiModels(e){this._geminiModelsLoading=!0,this._geminiModelsError=void 0,this._geminiModelsKey=e;try{const t=await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${e}`);if(!t.ok){const e=await t.text();throw new Error(`ListModels Fehler: ${t.status} ${e}`)}const i=await t.json(),s=(i?.models||[]).filter(e=>(e.supportedGenerationMethods||[]).includes("generateContent")).map(e=>e.name||"").filter(Boolean).map(e=>e.replace(/^models\//,"")).filter(Boolean).sort();this._geminiModels=s}catch(e){this._geminiModelsError=e?.message||String(e),this._geminiModels=void 0,console.warn("[bmw-status-card] Gemini ListModels fehlgeschlagen:",e)}finally{this._geminiModelsLoading=!1,this.requestUpdate()}}_onListChanged(e){const t=e.target,i=t?.dataset?.path;if(!i)return;const s=(t.value||"").split(",").map(e=>e.trim()).filter(Boolean);this._setConfigValue(i,s.length?s:void 0)}async _resolveDeviceIdFromEntity(e,t){if(this.hass)try{const i=await this.hass.callWS({type:"config/entity_registry/get",entity_id:e});i?.device_id&&this._setConfigValue(t,i.device_id)}catch(e){}}async _onEntityPicked(e){const t=e.target,i=e.detail?.value??t?.value,s=t?.dataset?.target;i&&s&&("bmw_home_device_id"===s?this._bmwHomeEntity=i:"bmw_cardata_device_id"===s&&(this._bmwCardataEntity=i),await this._resolveDeviceIdFromEntity(i,s))}render(){if(!this._config)return j``;const e=this._config.image?.mode||"off",t=this._config.image?.ai||{},i=this._config.image?.compositor||{},s=i.provider?.type||(i.provider?.api_key?"gemini":i.provider?.entity_id?"ai_task":"gemini"),a=t.provider||"ha_ai_task",n=(this._aiTaskEntities||[]).filter(e=>e.startsWith("ai_task.")),r=t.ha_entity_id||t.entity_id||t.ai_task_entity||t.entity||t.task_entity,o=this._normalizeEntityId(r)||("string"==typeof r?r.trim():"")||"",l=o&&!n.includes(o)?[o,...n]:n,c=!1!==t.generate_on_demand,d=t.upload??("openai"===a||"gemini"===a||"ha_ai_task"===a);try{return j`
         <div class="form">
           ${this._editorError?j`<div class="error">${this._editorError}</div>`:null}
           <ha-alert alert-type="info">Benötigt bmw_home und bmw-cardata-ha Geräte-IDs.</ha-alert>
@@ -261,15 +261,16 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
           ${"compositor"===e?j`
                 <div class="row">
                   <div class="field">
-                    <label class="hint">ai_task Entity (optional)</label>
-                    <ha-entity-picker
-                      .hass=${this.hass}
-                      .value=${i.provider?.entity_id||""}
-                      .includeEntities=${a}
-                      data-path="image.compositor.provider.entity_id"
-                      @value-changed=${this._onSelectChanged}
-                      allow-custom-entity
-                    ></ha-entity-picker>
+                    <label class="hint">Compositor Provider</label>
+                    <select
+                      data-path="image.compositor.provider.type"
+                      @change=${e=>this._onSelectChanged(e)}
+                      .value=${s}
+                    >
+                      <option value="gemini">Gemini (empfohlen für Inpainting)</option>
+                      <option value="openai">OpenAI (Inpainting)</option>
+                      <option value="ai_task">Home Assistant ai_task (ohne Inpainting)</option>
+                    </select>
                   </div>
                   <ha-textfield
                     label="Basis-Ansicht (optional)"
@@ -279,6 +280,55 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>
+
+                ${"gemini"===s||"openai"===s?j`
+                      <div class="row">
+                        <ha-textfield
+                          label="Provider API Key"
+                          .value=${i.provider?.api_key||""}
+                          data-path="image.compositor.provider.api_key"
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                        <ha-textfield
+                          label="Model (optional)"
+                          .value=${i.provider?.model||""}
+                          data-path="image.compositor.provider.model"
+                          .placeholder=${"gemini"===s?"gemini-2.5-flash-image-preview":"gpt-image-1"}
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                      </div>
+                      ${"openai"===s?j`
+                            <div class="row">
+                              <div class="field">
+                                <label class="hint">Bildgröße (OpenAI)</label>
+                                <select
+                                  data-path="image.compositor.provider.size"
+                                  @change=${e=>this._onSelectChanged(e)}
+                                  .value=${i.provider?.size||"1024x1024"}
+                                >
+                                  <option value="1024x1024">1024x1024</option>
+                                  <option value="1792x1024">1792x1024</option>
+                                  <option value="1024x1792">1024x1792</option>
+                                </select>
+                              </div>
+                            </div>
+                          `:null}
+                    `:j`
+                      <div class="row">
+                        <div class="field">
+                          <label class="hint">ai_task Entity</label>
+                          <ha-entity-picker
+                            .hass=${this.hass}
+                            .value=${i.provider?.entity_id||""}
+                            .includeEntities=${n}
+                            data-path="image.compositor.provider.entity_id"
+                            @value-changed=${this._onSelectChanged}
+                            allow-custom-entity
+                          ></ha-entity-picker>
+                        </div>
+                      </div>
+                    `}
+
                 <div class="row">
                   <ha-textfield
                     label="Asset-Pfad (optional)"
@@ -293,8 +343,17 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>
+                <div class="row">
+                  <ha-textfield
+                    label="Masken-Basispfad (optional)"
+                    .value=${i.mask_base_path||"/local/image_compositor/masks"}
+                    data-path="image.compositor.mask_base_path"
+                    @input=${this._onValueChanged}
+                  ></ha-textfield>
+                </div>
                 <div class="hint">
-                  Nutzt <strong>image_compositor</strong> und <strong>ai_task</strong>, um Basisbild + Overlays zu erzeugen und zu cachen.
+                  Für exakt ausgerichtete BMW-Overlays nutze <strong>Gemini</strong> oder <strong>OpenAI</strong> (Inpainting).
+                  <strong>ai_task</strong> ist möglich, aber ohne deterministisches Inpainting.
                 </div>
               `:null}
 
@@ -305,7 +364,7 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                     <select
                       data-path="image.ai.provider"
                       @change=${e=>this._onSelectChanged(e)}
-                      .value=${s}
+                      .value=${a}
                     >
                       <option value="openai">OpenAI</option>
                       <option value="gemini">Gemini (Imagen)</option>
@@ -313,7 +372,7 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                       <option value="generic">Generic Endpoint</option>
                     </select>
                   </div>
-                  ${"openai"===s||"gemini"===s?j`
+                  ${"openai"===a||"gemini"===a?j`
                         <ha-textfield
                           label="AI API Key (erforderlich für OpenAI/Gemini)"
                           .value=${t.api_key||""}
@@ -327,29 +386,29 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                     raised
                     @click=${()=>this._setConfigValue("image.ai.generate_request_id",String(Date.now()))}
                   >Generate Images</ha-button>
-                  ${l?j`<div class="hint">Bilder werden nur nach Klick generiert (Cache aktiv).</div>`:j`<div class="hint">Auto-Generierung aktiv.</div>`}
+                  ${c?j`<div class="hint">Bilder werden nur nach Klick generiert (Cache aktiv).</div>`:j`<div class="hint">Auto-Generierung aktiv.</div>`}
                 </div>
-                ${"ha_ai_task"===s?j`
+                ${"ha_ai_task"===a?j`
                       <div class="hint">Nutze Home Assistant ai_task.generate_image und erhalte Media-URLs.</div>
                       <div class="field">
                         <label class="hint">ai_task Entity (optional)</label>
                         <ha-entity-picker
                           .hass=${this.hass}
-                          .value=${r}
-                          .includeEntities=${a}
+                          .value=${o}
+                          .includeEntities=${n}
                           data-path="image.ai.ha_entity_id"
                           @value-changed=${this._onSelectChanged}
                           allow-custom-entity
                         ></ha-entity-picker>
                       </div>
-                      ${0===o.length?j`<div class="hint">Keine ai_task Entities gefunden.</div>`:null}
+                      ${0===l.length?j`<div class="hint">Keine ai_task Entities gefunden.</div>`:null}
                     `:null}
-                ${"openai"===s||"gemini"===s||"ha_ai_task"===s?j`
+                ${"openai"===a||"gemini"===a||"ha_ai_task"===a?j`
                       <div class="row">
                         <div class="field">
                           <label class="hint">Bilder via upload_file speichern</label>
                           <ha-switch
-                            .checked=${c}
+                            .checked=${d}
                             data-path="image.ai.upload"
                             @change=${this._onToggleChanged}
                           ></ha-switch>
@@ -362,7 +421,7 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                             @change=${this._onToggleChanged}
                           ></ha-switch>
                         </div>
-                        ${c?j`
+                        ${d?j`
                               <ha-textfield
                                 label="Upload Pfad (relativ zu /config)"
                                 .value=${t.upload_path||"www/upload_file"}
@@ -378,9 +437,9 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                         Speichert eine <code>.meta.json</code> Datei je Bild im Upload-Pfad.
                       </div>
                     `:null}
-                ${"generic"!==s?j`
+                ${"generic"!==a?j`
                       <div class="row">
-                        ${"gemini"===s&&this._geminiModels?.length?j`
+                        ${"gemini"===a&&this._geminiModels?.length?j`
                               <div class="field">
                                 <label class="hint">Gemini Model (aus ListModels)</label>
                                 <select
@@ -392,7 +451,7 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                                   ${this._geminiModels.map(e=>j`<option value=${e}>${e}</option>`)}
                                 </select>
                               </div>
-                            `:"openai"===s&&this._openAiModels?.length?j`
+                            `:"openai"===a&&this._openAiModels?.length?j`
                                 <div class="field">
                                   <label class="hint">OpenAI Model (gefiltert)</label>
                                   <select
@@ -413,7 +472,7 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                                   @input=${this._onValueChanged}
                                 ></ha-textfield>
                               `}
-                        ${"openai"===s?j`
+                        ${"openai"===a?j`
                               <div class="field">
                                 <label class="hint">Bildgröße (OpenAI)</label>
                                 <select
@@ -438,12 +497,12 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                         ></ha-textfield>
                       </div>
                     `}
-                ${"gemini"===s&&this._geminiModelsLoading?j`<div class="hint">Lade Gemini-Modelle…</div>`:null}
-                ${"gemini"===s&&this._geminiModelsError?j`<div class="hint">${this._geminiModelsError}</div>`:null}
-                ${"openai"===s&&this._openAiModelsLoading?j`<div class="hint">Lade OpenAI-Modelle…</div>`:null}
-                ${"openai"===s&&this._openAiModelsError?j`<div class="hint">${this._openAiModelsError}</div>`:null}
+                ${"gemini"===a&&this._geminiModelsLoading?j`<div class="hint">Lade Gemini-Modelle…</div>`:null}
+                ${"gemini"===a&&this._geminiModelsError?j`<div class="hint">${this._geminiModelsError}</div>`:null}
+                ${"openai"===a&&this._openAiModelsLoading?j`<div class="hint">Lade OpenAI-Modelle…</div>`:null}
+                ${"openai"===a&&this._openAiModelsError?j`<div class="hint">${this._openAiModelsError}</div>`:null}
                 <div class="row">
-                  ${"gemini"===s?j`
+                  ${"gemini"===a?j`
                         <div class="field">
                           <label class="hint">Aspect Ratio (Gemini)</label>
                           <select
@@ -501,5 +560,5 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                 <div class="hint">Optional: Bei Prompts wird {angle} ignoriert, Views sind dann optional.</div>
               `:null}
         </div>
-      `}catch(e){return this._setEditorError(e),j`<div class="error">${this._editorError}</div>`}}}customElements.define(le,he),customElements.define("bmw-status-card-editor",_e),window.customCards=window.customCards||[],window.customCards.push({type:le,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.72"});
+      `}catch(e){return this._setEditorError(e),j`<div class="error">${this._editorError}</div>`}}}customElements.define(le,he),customElements.define("bmw-status-card-editor",_e),window.customCards=window.customCards||[],window.customCards.push({type:le,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.73"});
 //# sourceMappingURL=bmw-status-card.js.map

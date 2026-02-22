@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.72
+Version: 0.1.73
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -149,7 +149,19 @@ image:
       sunroof_open: "/local/image_compositor/masks/sunroof_open.png"
       sunroof_tilt: "/local/image_compositor/masks/sunroof_tilt.png"
 ```
-```
+
+  ### Visueller Editor (Compositor) – einfache Nutzung
+
+  Im Karten-Editor unter **Bildmodus → compositor (AI-Overlays)** sind jetzt alle relevanten Felder direkt auswählbar:
+
+  - **Compositor Provider**: `gemini` (empfohlen), `openai` oder `ai_task`
+  - Bei `gemini`/`openai`: **API Key** + **Model** (bei OpenAI zusätzlich **Bildgröße**)
+  - Bei `ai_task`: **ai_task Entity**
+  - Für alle Varianten: **Basis-Ansicht**, **Asset-Pfad**, **Output-Pfad**, **Masken-Basispfad**
+
+  Hinweis:
+  - Für präzise, deckungsgleiche BMW-Overlays nutze `gemini` oder `openai` (Inpainting).
+  - `ai_task` ist weiterhin möglich, aber ohne deterministisches Inpainting.
 
 ### Overrides für vehicle-status-card
 
@@ -180,7 +192,7 @@ Du kannst per `vehicle_status_card` die generierte Konfiguration jederzeit über
 - Für Provider `openai` wird `image.ai.api_key` benötigt.
 - Für Provider `gemini` wird `image.ai.api_key` benötigt (Imagen API).
 - Für Provider `ha_ai_task` wird `image.ai.ha_entity_id` empfohlen.
-- Im `image.mode: compositor` kann `image.compositor.provider.type` jetzt `gemini` sein.
+- Im `image.mode: compositor` kann `image.compositor.provider.type` `gemini`, `openai` oder `ai_task` sein.
 - `upload` speichert OpenAI/Gemini-URLs über die [upload_file](https://github.com/lweberru/upload_file)-Integration in `/config/www` (Zugriff via `/local/`).
 - Für `generic` kannst du einen eigenen Endpoint definieren.
 - Mit `views` kannst du mehrere Blickwinkel erzeugen (z. B. Front/Seite/Heck). Nutze dazu `{angle}` im Prompt.

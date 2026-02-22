@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.75';
+const VERSION = '0.1.76';
 
 type HassState = {
   entity_id: string;
@@ -4241,7 +4241,7 @@ class BMWStatusCardEditor extends LitElement {
                           .value=${compositor.provider?.model || ''}
                           data-path="image.compositor.provider.model"
                           .placeholder=${compositorProviderType === 'gemini'
-                            ? 'imagen-3.0-generate-002'
+                            ? 'gemini-2.0-flash-preview-image-generation'
                             : 'gpt-image-1'}
                           @input=${this._onValueChanged}
                         ></ha-textfield>

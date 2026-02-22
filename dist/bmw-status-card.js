@@ -293,7 +293,7 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                           label="Model (optional)"
                           .value=${i.provider?.model||""}
                           data-path="image.compositor.provider.model"
-                          .placeholder=${"gemini"===s?"imagen-3.0-generate-002":"gpt-image-1"}
+                          .placeholder=${"gemini"===s?"gemini-2.0-flash-preview-image-generation":"gpt-image-1"}
                           @input=${this._onValueChanged}
                         ></ha-textfield>
                       </div>
@@ -560,5 +560,5 @@ const $=globalThis,k=e=>e,E=$.trustedTypes,S=E?E.createPolicy("lit-html",{create
                 <div class="hint">Optional: Bei Prompts wird {angle} ignoriert, Views sind dann optional.</div>
               `:null}
         </div>
-      `}catch(e){return this._setEditorError(e),j`<div class="error">${this._editorError}</div>`}}}customElements.define(le,he),customElements.define("bmw-status-card-editor",_e),window.customCards=window.customCards||[],window.customCards.push({type:le,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.75"});
+      `}catch(e){return this._setEditorError(e),j`<div class="error">${this._editorError}</div>`}}}customElements.define(le,he),customElements.define("bmw-status-card-editor",_e),window.customCards=window.customCards||[],window.customCards.push({type:le,name:"BMW Status Card",description:"Auto-Konfiguration für bmw_home + bmw-cardata-ha, basiert auf vehicle-status-card.",version:"0.1.76"});
 //# sourceMappingURL=bmw-status-card.js.map

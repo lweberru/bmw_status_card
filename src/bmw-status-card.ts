@@ -79,6 +79,7 @@ type ImageConfig = {
 };
 
 type ImageCompositorConfig = {
+  render_mode?: 'overlay' | 'state_render';
   provider?: {
     type?: 'ai_task' | 'openai' | 'gemini';
     entity_id?: string;
@@ -618,6 +619,11 @@ class BMWStatusCard extends LitElement {
 
     const compositor = this._config.image.compositor;
     const providerPayload = this._buildCompositorProviderPayload(compositor);
+    const renderMode = compositor.render_mode || 'state_render';
+
+    if (renderMode === 'state_render') {
+      return this._resolveCompositedStateRenderImages(vehicleInfo, entities, compositor, providerPayload);
+    }
 
     const context = this._resolveCompositorContext(compositor, entities);
     const baseView = context.baseView;
@@ -752,6 +758,162 @@ class BMWStatusCard extends LitElement {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn('[bmw-status-card] image_compositor compose failed:', err);
+      return [];
+    }
+  }
+
+  private _describeOpeningsForStateRender(entities: EntityInfo[]): string[] {
+    const descriptions = new Set<string>();
+    const doorEntities = this._pickEntities(entities, new Set(), ['binary_sensor', 'sensor', 'cover'], [
+      'door',
+      'window',
+      'trunk',
+      'tailgate',
+      'boot',
+      'hood',
+      'bonnet',
+      'sunroof',
+      'roof',
+      'flap',
+      'tür',
+      'fenster',
+      'kofferraum',
+      'heckklappe',
+      'motorhaube',
+      'schiebedach',
+      'dach',
+      'klappe',
+      'panoramadach'
+    ]);
+
+    const labels: Record<string, string> = {
+      door_front_left_open: 'front left door open',
+      door_front_right_open: 'front right door open',
+      door_rear_left_open: 'rear left door open',
+      door_rear_right_open: 'rear right door open',
+      window_front_left_open: 'front left window open',
+      window_front_right_open: 'front right window open',
+      window_rear_left_open: 'rear left window open',
+      window_rear_right_open: 'rear right window open',
+      hood_open: 'hood open',
+      trunk_open: 'trunk open',
+      sunroof_open: 'sunroof open',
+      sunroof_tilt: 'sunroof tilted'
+    };
+
+    doorEntities.forEach((entityId) => {
+      if (this._isDoorOverallEntity(entityId)) return;
+      const state = this.hass?.states[entityId]?.state;
+      if (!state) return;
+      const open = this._isOpenState(state);
+      const sunroofState = this._getSunroofState(entityId, state);
+      const key = this._getOpeningAssetKey(entityId, sunroofState, open);
+      if (!key) return;
+      descriptions.add(labels[key] || key.replaceAll('_', ' '));
+    });
+
+    return Array.from(descriptions.values());
+  }
+
+  private _buildStateRenderPrompt(vehicleInfo: VehicleInfo, baseView: string, scene: CompositorScene, entities: EntityInfo[]): string {
+    const basePrompt = this._buildCompositorPrompt(vehicleInfo, baseView, scene);
+    const activeOpenings = this._describeOpeningsForStateRender(entities);
+    const openingsText = activeOpenings.length
+      ? activeOpenings.join(', ')
+      : 'all doors, windows, hood, trunk and sunroof closed';
+
+    return `${basePrompt}. Keep identical car identity, camera framing and background. Render current vehicle state: ${openingsText}. Return full-frame photorealistic image.`
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private async _resolveCompositedStateRenderImages(
+    vehicleInfo: VehicleInfo,
+    entities: EntityInfo[],
+    compositor: ImageCompositorConfig,
+    providerPayload: Record<string, any>
+  ): Promise<string[]> {
+    if (!this.hass) return [];
+
+    const context = this._resolveCompositorContext(compositor, entities);
+    const baseView = context.baseView;
+    const assetPath = context.assetPath;
+    const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
+    const forceRegenerate = Boolean(regenerateRequestId);
+    const inplaceMode = ['openai', 'gemini'].includes(String(providerPayload.type));
+    const bundleSuffix = context.bundleBySceneView ? `${context.view}-${context.scene}` : undefined;
+    const assetPrefixBase = this._buildCompositorAssetPrefix(vehicleInfo);
+    const assetPrefix = bundleSuffix ? `${assetPrefixBase}-${bundleSuffix}` : assetPrefixBase;
+    const baseStem = `${assetPrefix}_base`;
+    const stateHash = this._hash(
+      JSON.stringify({
+        state: this._buildCompositeStateKey(),
+        scene: context.scene,
+        view: context.view,
+        regenerateRequestId: regenerateRequestId || undefined
+      })
+    );
+    const stateFilename = `${assetPrefix}_state_render_${Math.abs(Number(stateHash) || 0)}.png`;
+
+    if ((providerPayload.type === 'gemini' || providerPayload.type === 'openai') && !providerPayload.api_key) {
+      // eslint-disable-next-line no-console
+      console.warn('[bmw-status-card] compositor provider requires api_key:', providerPayload.type);
+      return [];
+    }
+
+    const statePrompt = this._buildStateRenderPrompt(vehicleInfo, baseView, context.scene, entities);
+    const assets: Array<Record<string, any>> = [];
+    if (!compositor.base_image) {
+      assets.push({
+        name: 'base',
+        filename: `${baseStem}.png`,
+        prompt: this._buildCompositorPrompt(vehicleInfo, baseView, context.scene),
+        format: 'png'
+      });
+    }
+    assets.push({
+      name: 'state_render',
+      filename: stateFilename,
+      prompt: statePrompt,
+      format: 'png',
+      ...(inplaceMode && compositor.base_image ? { base_image: compositor.base_image } : {}),
+      ...(inplaceMode && !compositor.base_image ? { base_ref: baseStem } : {})
+    });
+
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'ensure_assets',
+        service_data: {
+          output_path: assetPath,
+          task_name_prefix: `${vehicleInfo.name || 'BMW Assets'} State`,
+          provider: providerPayload,
+          assets,
+          force: forceRegenerate
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      const items = (payload?.assets || []) as Array<{ name?: string; local_url?: string; error?: string }>;
+      const stateItem = items.find((item) => item?.name === 'state_render' && item?.local_url);
+
+      if (forceRegenerate && this._config?.image?.compositor) {
+        const nextConfig: BMWStatusCardConfig = {
+          ...this._config,
+          image: {
+            ...(this._config.image || {}),
+            compositor: { ...(this._config.image?.compositor || {}) }
+          }
+        };
+        delete (nextConfig.image?.compositor as any).regenerate_request_id;
+        this._config = nextConfig;
+      }
+
+      return stateItem?.local_url ? [String(stateItem.local_url)] : [];
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[bmw-status-card] image_compositor state_render failed:', err);
       return [];
     }
   }
@@ -4676,6 +4838,7 @@ class BMWStatusCardEditor extends LitElement {
     if (this._compositorWorkflowBusy) return;
     this._compositorWorkflowBusy = true;
     this._compositorWorkflowStatus = undefined;
+    const renderMode = this._config.image?.compositor?.render_mode || 'state_render';
 
     try {
       if (step === 1) {
@@ -4692,6 +4855,10 @@ class BMWStatusCardEditor extends LitElement {
       }
 
       if (step === 2) {
+        if (renderMode === 'state_render') {
+          this._compositorWorkflowStatus = 'Im state_render-Modus ist der Masken-Schritt nicht erforderlich.';
+          return;
+        }
         this._compositorWorkflowStatus =
           this._compositorWorkflowStep < 2
             ? 'Schritt 2 läuft: Masken erzeugen mit vorhandenem Base-Bild (oder letztem *_base.png)…'
@@ -4706,12 +4873,15 @@ class BMWStatusCardEditor extends LitElement {
         return;
       }
 
-      if (this._compositorWorkflowStep < 3) {
+      if (renderMode === 'overlay' && this._compositorWorkflowStep < 3) {
         this._compositorWorkflowStatus = 'Bitte zuerst Schritt 1 und 2 ausführen.';
         return;
       }
 
-      this._compositorWorkflowStatus = 'Schritt 3 läuft: Overlays/Compose neu bauen…';
+      this._compositorWorkflowStatus =
+        renderMode === 'overlay'
+          ? 'Schritt 3 läuft: Overlays/Compose neu bauen…'
+          : 'Schritt 2 läuft: Zustand neu rendern…';
       try {
         await this.hass.callWS({
           type: 'call_service',
@@ -4725,7 +4895,10 @@ class BMWStatusCardEditor extends LitElement {
       }
       this._setConfigValue('image.compositor.regenerate_request_id', String(Date.now()));
       this._compositorWorkflowStep = 1;
-      this._compositorWorkflowStatus = 'Schritt 3 angestoßen. Karte baut Assets/Compose jetzt neu auf.';
+      this._compositorWorkflowStatus =
+        renderMode === 'overlay'
+          ? 'Schritt 3 angestoßen. Karte baut Assets/Compose jetzt neu auf.'
+          : 'Zustands-Render angestoßen. Karte rendert das aktuelle Bild jetzt neu.';
     } finally {
       this._compositorWorkflowBusy = false;
       this.requestUpdate();
@@ -4738,6 +4911,7 @@ class BMWStatusCardEditor extends LitElement {
     const imageMode = this._config.image?.mode || 'off';
     const ai = this._config.image?.ai || {};
     const compositor = this._config.image?.compositor || {};
+    const compositorRenderMode = compositor.render_mode || 'state_render';
     const compositorContext = this._resolveEditorCompositorContext(compositor);
     const compositorProviderType =
       compositor.provider?.type ||
@@ -4873,6 +5047,17 @@ class BMWStatusCardEditor extends LitElement {
           ${imageMode === 'compositor'
             ? html`
                 <div class="row">
+                  <div class="field">
+                    <label class="hint">Compositor Modus</label>
+                    <select
+                      data-path="image.compositor.render_mode"
+                      @change=${(ev: Event) => this._onSelectChanged(ev as any)}
+                      .value=${compositorRenderMode}
+                    >
+                      <option value="state_render">state_render (empfohlen, ohne Masken)</option>
+                      <option value="overlay">overlay (klassisch mit Masken)</option>
+                    </select>
+                  </div>
                   <div class="field">
                     <label class="hint">Compositor Provider</label>
                     <select
@@ -5033,64 +5218,79 @@ class BMWStatusCardEditor extends LitElement {
                     @input=${this._onValueChanged}
                   ></ha-textfield>
                 </div>
-                <div class="row">
-                  <ha-textfield
-                    label="Masken-Basispfad (optional)"
-                    .value=${compositor.mask_base_path || '/local/image_compositor/masks'}
-                    data-path="image.compositor.mask_base_path"
-                    @input=${this._onValueChanged}
-                  ></ha-textfield>
-                </div>
-                <div class="row">
-                  <ha-textfield
-                    label="Masken-Threshold (Default 16)"
-                    .value=${compositor.mask_threshold ?? ''}
-                    type="number"
-                    min="1"
-                    max="255"
-                    placeholder="16"
-                    data-path="image.compositor.mask_threshold"
-                    @input=${this._onValueChanged}
-                  ></ha-textfield>
-                  <ha-textfield
-                    label="Masken-Temperature Gemini (Default 0.1)"
-                    .value=${compositor.mask_temperature ?? ''}
-                    type="number"
-                    min="0"
-                    max="2"
-                    step="0.1"
-                    placeholder="0.1"
-                    data-path="image.compositor.mask_temperature"
-                    @input=${this._onValueChanged}
-                  ></ha-textfield>
-                </div>
+                ${compositorRenderMode === 'overlay'
+                  ? html`
+                      <div class="row">
+                        <ha-textfield
+                          label="Masken-Basispfad (optional)"
+                          .value=${compositor.mask_base_path || '/local/image_compositor/masks'}
+                          data-path="image.compositor.mask_base_path"
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                      </div>
+                      <div class="row">
+                        <ha-textfield
+                          label="Masken-Threshold (Default 16)"
+                          .value=${compositor.mask_threshold ?? ''}
+                          type="number"
+                          min="1"
+                          max="255"
+                          placeholder="16"
+                          data-path="image.compositor.mask_threshold"
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                        <ha-textfield
+                          label="Masken-Temperature Gemini (Default 0.1)"
+                          .value=${compositor.mask_temperature ?? ''}
+                          type="number"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          placeholder="0.1"
+                          data-path="image.compositor.mask_temperature"
+                          @input=${this._onValueChanged}
+                        ></ha-textfield>
+                      </div>
+                    `
+                  : html`<div class="hint">state_render aktiv: Türen/Fenster werden pro Zustand direkt neu gerendert (ohne Masken-Workflow).</div>`}
                 <div class="actions">
                   <ha-button
                     raised
                     .disabled=${this._compositorWorkflowBusy}
                     @click=${() => this._runCompositorWorkflowStep(1)}
                   >1) Base neu erzeugen</ha-button>
+                  ${compositorRenderMode === 'overlay'
+                    ? html`
+                        <ha-button
+                          raised
+                          .disabled=${this._compositorWorkflowBusy}
+                          @click=${() => this._runCompositorWorkflowStep(2)}
+                        >2) Masken neu erzeugen</ha-button>
+                      `
+                    : null}
                   <ha-button
                     raised
-                    .disabled=${this._compositorWorkflowBusy}
-                    @click=${() => this._runCompositorWorkflowStep(2)}
-                  >2) Masken neu erzeugen</ha-button>
-                  <ha-button
-                    raised
-                    .disabled=${this._compositorWorkflowBusy || this._compositorWorkflowStep < 3}
+                    .disabled=${
+                      this._compositorWorkflowBusy ||
+                      (compositorRenderMode === 'overlay' ? this._compositorWorkflowStep < 3 : false)
+                    }
                     @click=${() => this._runCompositorWorkflowStep(3)}
-                  >3) Overlays/Compose neu bauen</ha-button>
+                  >${compositorRenderMode === 'overlay' ? '3) Overlays/Compose neu bauen' : '2) Zustand neu rendern'}</ha-button>
                 </div>
                 <div class="hint">
-                  Workflow: Base neu erzeugen ist optional. Du kannst Masken direkt mit vorhandenem Base-Bild oder letztem
-                  *_base.png erzeugen. Aktueller Schritt: ${this._compositorWorkflowStep}.
+                  ${compositorRenderMode === 'overlay'
+                    ? html`Workflow: Base neu erzeugen ist optional. Du kannst Masken direkt mit vorhandenem Base-Bild oder letztem
+                        *_base.png erzeugen. Aktueller Schritt: ${this._compositorWorkflowStep}.`
+                    : html`Workflow: Base optional neu erzeugen und danach Zustand neu rendern. Aktueller Schritt: ${this._compositorWorkflowStep}.`}
                 </div>
                 ${this._compositorWorkflowStatus ? html`<div class="hint">${this._compositorWorkflowStatus}</div>` : null}
-                <div class="hint">
-                  Nutzt <strong>image_compositor.generate_masks</strong> und legt Masken automatisch im Masken-Pfad ab.
-                </div>
+                ${compositorRenderMode === 'overlay'
+                  ? html`<div class="hint">
+                      Nutzt <strong>image_compositor.generate_masks</strong> und legt Masken automatisch im Masken-Pfad ab.
+                    </div>`
+                  : null}
                 ${this._maskGenerationError ? html`<div class="error">${this._maskGenerationError}</div>` : null}
-                ${this._maskPreviews.length
+                ${compositorRenderMode === 'overlay' && this._maskPreviews.length
                   ? html`
                       <div class="mask-grid">
                         ${this._maskPreviews.map(

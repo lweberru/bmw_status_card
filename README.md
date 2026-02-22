@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.83
+Version: 0.1.84
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -106,6 +106,7 @@ image:
 image:
   mode: compositor
   compositor:
+    render_mode: state_render # state_render (empfohlen) | overlay
     provider:
       type: gemini
       api_key: !secret gemini_api_key
@@ -113,8 +114,8 @@ image:
     base_view: "front 3/4 view"
     view_mode: "auto" # auto | front_left | rear_right
     scene_entity: "binary_sensor.320d_xdrive_vehicle_motion_state" # optional
-    mask_threshold: 16 # optional, default 16
-    mask_temperature: 0.1 # optional, gemini default for mask generation
+    mask_threshold: 16 # nur für overlay-Modus
+    mask_temperature: 0.1 # nur für overlay-Modus
     view_prompts:
       front_left: "front 3/4 view"
       rear_right: "rear 3/4 view"
@@ -170,17 +171,19 @@ image:
 
 Im Karten-Editor unter **Bildmodus → compositor (AI-Overlays)** sind jetzt alle relevanten Felder direkt auswählbar:
 
+- **Compositor Modus**: `state_render` (empfohlen) oder `overlay`
 - **Compositor Provider**: `gemini` (empfohlen), `openai` oder `ai_task`
 - Bei `gemini`/`openai`: **API Key** + **Model** (bei OpenAI zusätzlich **Bildgröße**)
 - Bei `ai_task`: **ai_task Entity**
 - Für alle Varianten: **Basis-Ansicht**, **Asset-Pfad**, **Output-Pfad**, **Masken-Basispfad**
-- Neu: geführter 3-Schritt-Workflow mit Buttons:
+- Neu: geführter Workflow mit Buttons:
   1. **Base neu erzeugen**
-  2. **Masken neu erzeugen**
-  3. **Overlays/Compose neu bauen**
+  2. (**nur overlay**) **Masken neu erzeugen**
+  3. (**overlay**) **Overlays/Compose neu bauen** oder (**state_render**) **Zustand neu rendern**
 
 Hinweis:
-- Für präzise, deckungsgleiche BMW-Overlays nutze `gemini` oder `openai` (Inpainting).
+- Für robuste Ergebnisse ist `state_render` empfohlen (ohne Masken).
+- Für präzise, deckungsgleiche BMW-Overlays nutze im `overlay`-Modus `gemini` oder `openai` (Inpainting).
 - `ai_task` ist weiterhin möglich, aber ohne deterministisches Inpainting.
 - Mit `bundle_by_scene_view: true` schreibt die Karte automatisch nach
   `.../assets/<view>/<scene>`, `.../masks/<view>/<scene>` und `.../<view>/<scene>` für Compose-Ausgaben.

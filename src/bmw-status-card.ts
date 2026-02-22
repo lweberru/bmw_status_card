@@ -876,6 +876,7 @@ class BMWStatusCard extends LitElement {
       filename: stateFilename,
       prompt: statePrompt,
       format: 'png',
+      postprocess: 'composite_with_base',
       ...(inplaceMode && compositor.base_image ? { base_image: compositor.base_image } : {}),
       ...(inplaceMode && !compositor.base_image ? { base_ref: baseStem } : {})
     });
@@ -1417,6 +1418,28 @@ class BMWStatusCard extends LitElement {
     return this._hash(JSON.stringify(states));
   }
 
+  private _buildTireTopDownBasePrompt(vehicleInfo: VehicleInfo): string {
+    const make = (vehicleInfo.make || 'BMW').trim();
+    const model = (vehicleInfo.model || '').trim();
+    const series = (vehicleInfo.series || '').trim();
+    const year = (vehicleInfo.year || '').trim();
+    const color = (vehicleInfo.color || '').trim();
+    const trim = (vehicleInfo.trim || '').trim();
+    const plate = (vehicleInfo.license_plate || '').trim();
+
+    const identity = [year, color, make, model, series, trim].filter(Boolean).join(' ');
+    const brandLock = `This must be exactly the same ${make} vehicle identity. Do not change brand, model family, grille design, body shape, wheel style, or badges.`;
+    const plateLock = plate ? `License plate text must remain: ${plate}.` : '';
+
+    return (
+      `High-quality photo of ${identity}, top-down view, directly above, centered, orthographic, ` +
+      `clean studio floor background, front of the car at the bottom of the image, driver side on the left. ` +
+      `${brandLock} ${plateLock}`
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   private async _resolveCompositedTireCardImage(
     vehicleInfo: VehicleInfo,
     entities: EntityInfo[]
@@ -1440,8 +1463,7 @@ class BMWStatusCard extends LitElement {
       {
         name: 'tire_base',
         filename: `${baseStem}.png`,
-        prompt:
-          'top-down view, directly above, centered, orthographic, clean studio background, front of the car at the bottom of the image, driver side on the left',
+        prompt: this._buildTireTopDownBasePrompt(vehicleInfo),
         format: 'png'
       },
       {
@@ -1565,9 +1587,8 @@ class BMWStatusCard extends LitElement {
 
     const tireAi: ImageAiConfig = {
       ...imageConfig.ai,
-      views: [
-        'top-down view, directly above, centered, orthographic, clean studio background, front of the car at the bottom of the image, driver side on the left'
-      ],
+      prompts: [this._buildTireTopDownBasePrompt(vehicleInfo)],
+      views: undefined,
       max_images: 1,
       count: 1
     };

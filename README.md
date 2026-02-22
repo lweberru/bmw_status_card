@@ -1,6 +1,6 @@
 # BMW Status Card (bmw_status_card)
 
-Version: 0.1.70
+Version: 0.1.72
 
 Eine Lovelace-Karte, die automatisch Entities aus **bmw_home** und **bmw-cardata-ha** erkennt und eine **vehicle-status-card** daraus erzeugt. Zusätzlich können Fahrzeugbilder via KI generiert werden, basierend auf dem Fahrzeugmodell und Zusatzinfos.
 
@@ -99,11 +99,55 @@ image:
   mode: compositor
   compositor:
     provider:
-      type: ai_task
-      entity_id: ai_task.google_ai_task
+      type: gemini
+      api_key: !secret gemini_api_key
+      model: gemini-2.5-flash-image-preview
     base_view: "front 3/4 view"
     asset_path: "www/image_compositor/assets"
     output_path: "www/image_compositor"
+    mask_base_path: "/local/image_compositor/masks"
+    mask_map:
+      door_front_left_open: "/local/image_compositor/masks/door_front_left_open.png"
+      door_front_right_open: "/local/image_compositor/masks/door_front_right_open.png"
+      hood_open: "/local/image_compositor/masks/hood_open.png"
+      trunk_open: "/local/image_compositor/masks/trunk_open.png"
+```
+
+### Compositor (fertiges BMW-Gemini-Beispiel)
+
+```yaml
+type: custom:bmw-status-card
+bmw_home_device_id: 1234567890abcdef
+bmw_cardata_device_id: abcdef1234567890
+vehicle_status_card_resource: /hacsfiles/vehicle-status-card/vehicle-status-card.js
+maptiler_api_key: !secret maptiler_key
+image:
+  mode: compositor
+  compositor:
+    provider:
+      type: gemini
+      api_key: !secret gemini_api_key
+      model: gemini-2.5-flash-image-preview
+      service_data:
+        generationConfig:
+          temperature: 0.2
+    base_view: "front 3/4 view"
+    asset_path: "www/image_compositor/assets"
+    output_path: "www/image_compositor"
+    mask_base_path: "/local/image_compositor/masks"
+    mask_map:
+      door_front_left_open: "/local/image_compositor/masks/door_front_left_open.png"
+      door_front_right_open: "/local/image_compositor/masks/door_front_right_open.png"
+      door_rear_left_open: "/local/image_compositor/masks/door_rear_left_open.png"
+      door_rear_right_open: "/local/image_compositor/masks/door_rear_right_open.png"
+      window_front_left_open: "/local/image_compositor/masks/window_front_left_open.png"
+      window_front_right_open: "/local/image_compositor/masks/window_front_right_open.png"
+      window_rear_left_open: "/local/image_compositor/masks/window_rear_left_open.png"
+      window_rear_right_open: "/local/image_compositor/masks/window_rear_right_open.png"
+      hood_open: "/local/image_compositor/masks/hood_open.png"
+      trunk_open: "/local/image_compositor/masks/trunk_open.png"
+      sunroof_open: "/local/image_compositor/masks/sunroof_open.png"
+      sunroof_tilt: "/local/image_compositor/masks/sunroof_tilt.png"
 ```
 ```
 
@@ -136,6 +180,7 @@ Du kannst per `vehicle_status_card` die generierte Konfiguration jederzeit über
 - Für Provider `openai` wird `image.ai.api_key` benötigt.
 - Für Provider `gemini` wird `image.ai.api_key` benötigt (Imagen API).
 - Für Provider `ha_ai_task` wird `image.ai.ha_entity_id` empfohlen.
+- Im `image.mode: compositor` kann `image.compositor.provider.type` jetzt `gemini` sein.
 - `upload` speichert OpenAI/Gemini-URLs über die [upload_file](https://github.com/lweberru/upload_file)-Integration in `/config/www` (Zugriff via `/local/`).
 - Für `generic` kannst du einen eigenen Endpoint definieren.
 - Mit `views` kannst du mehrere Blickwinkel erzeugen (z. B. Front/Seite/Heck). Nutze dazu `{angle}` im Prompt.

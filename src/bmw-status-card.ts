@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
 const VEHICLE_CARD_NAME = 'vehicle-status-card';
-const VERSION = '0.1.71';
+const VERSION = '0.1.72';
 
 type HassState = {
   entity_id: string;
@@ -77,7 +77,7 @@ type ImageConfig = {
 
 type ImageCompositorConfig = {
   provider?: {
-    type?: 'ai_task' | 'openai';
+    type?: 'ai_task' | 'openai' | 'gemini';
     entity_id?: string;
     service_data?: Record<string, any>;
     api_key?: string;
@@ -612,7 +612,17 @@ class BMWStatusCard extends LitElement {
       this._normalizeEntityId((provider as any).ha_entity_id) ||
       this._normalizeEntityId(this._config.image.ai?.ha_entity_id);
 
-    const inferredType = provider.type || (provider.api_key ? 'openai' : undefined) || (entityId ? 'ai_task' : undefined);
+    const aiProviderHint = this._config.image?.ai?.provider;
+    const inferredType =
+      provider.type ||
+      (provider.api_key
+        ? aiProviderHint === 'gemini'
+          ? 'gemini'
+          : aiProviderHint === 'openai'
+            ? 'openai'
+            : 'openai'
+        : undefined) ||
+      (entityId ? 'ai_task' : undefined);
     const providerPayload: Record<string, any> = {
       ...provider,
       type: inferredType
@@ -626,7 +636,7 @@ class BMWStatusCard extends LitElement {
     const baseView = compositor.base_view || 'front 3/4 view';
     const assetPath = compositor.asset_path || 'www/image_compositor/assets';
     const outputPath = compositor.output_path || 'www/image_compositor';
-    const openAiMode = providerPayload.type === 'openai';
+    const inplaceMode = ['openai', 'gemini'].includes(String(providerPayload.type));
     const assetPrefix = this._buildCompositorAssetPrefix(vehicleInfo);
     const baseStem = `${assetPrefix}_base`;
     const defaultMaskBase = this._normalizeLocalUploadUrl(
@@ -643,7 +653,7 @@ class BMWStatusCard extends LitElement {
       vehicleInfo,
       baseView,
       compositorDefaults,
-      openAiMode,
+      inplaceMode,
       assetPrefix,
       baseStem
     );
@@ -708,7 +718,7 @@ class BMWStatusCard extends LitElement {
     vehicleInfo: VehicleInfo,
     baseView: string,
     compositor: ImageCompositorConfig,
-    useOpenAi: boolean,
+    useInplaceProvider: boolean,
     assetPrefix: string,
     baseStem: string
   ): Array<Record<string, any>> {
@@ -754,15 +764,15 @@ class BMWStatusCard extends LitElement {
 
     openingPrompts.forEach((entry) => {
       const maskUrl = resolveMaskUrl(entry.name);
-      const useBaseRef = useOpenAi && !baseImage;
+      const useBaseRef = useInplaceProvider && !baseImage;
       assets.push({
         name: entry.name,
         filename: `${assetPrefix}_${entry.name}.png`,
         prompt: `${basePrompt} ${entry.description}, transparent background, only the opened part visible`,
         format: 'png',
-        ...(useOpenAi && baseImage ? { base_image: baseImage } : {}),
+        ...(useInplaceProvider && baseImage ? { base_image: baseImage } : {}),
         ...(useBaseRef ? { base_ref: baseStem } : {}),
-        ...(useOpenAi ? { derive_overlay: true } : {}),
+        ...(useInplaceProvider ? { derive_overlay: true } : {}),
         ...(maskUrl ? { mask_url: maskUrl } : {})
       });
     });
@@ -1988,23 +1998,13 @@ class BMWStatusCard extends LitElement {
       vehicleInfo.trim,
       vehicleInfo.license_plate
     ]
-      .map((item) => this._slugify(item))
-      .filter(Boolean);
+      .filter((item): item is string => Boolean(item && item.trim()))
+      .map((item) => this._slugify(item));
 
     const base = tokens.join('-');
     const hash = this._hash(JSON.stringify(vehicleInfo || {}));
     const prefix = base ? `bmw-${base}-${hash}` : `bmw-${hash}`;
     return prefix.slice(0, 64);
-  }
-
-  private _slugify(value?: string): string {
-    if (!value) return '';
-    const normalized = value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim();
-    return normalized.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
   private _hash(input: string): string {

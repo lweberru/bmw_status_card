@@ -763,7 +763,25 @@ class BMWStatusCard extends LitElement {
   }
 
   private _describeOpeningsForStateRender(entities: EntityInfo[]): string[] {
-    const descriptions = new Set<string>();
+    const labels: Record<string, string> = {
+      door_front_left_open: 'front left door open',
+      door_front_right_open: 'front right door open',
+      door_rear_left_open: 'rear left door open',
+      door_rear_right_open: 'rear right door open',
+      window_front_left_open: 'front left window open',
+      window_front_right_open: 'front right window open',
+      window_rear_left_open: 'rear left window open',
+      window_rear_right_open: 'rear right window open',
+      hood_open: 'hood open',
+      trunk_open: 'trunk open',
+      sunroof_open: 'sunroof open',
+      sunroof_tilt: 'sunroof tilted'
+    };
+    return this._collectOpeningStateKeys(entities).map((key) => labels[key] || key.replaceAll('_', ' '));
+  }
+
+  private _collectOpeningStateKeys(entities: EntityInfo[]): string[] {
+    const keys = new Set<string>();
     const doorEntities = this._pickEntities(entities, new Set(), ['binary_sensor', 'sensor', 'cover'], [
       'door',
       'window',
@@ -786,21 +804,6 @@ class BMWStatusCard extends LitElement {
       'panoramadach'
     ]);
 
-    const labels: Record<string, string> = {
-      door_front_left_open: 'front left door open',
-      door_front_right_open: 'front right door open',
-      door_rear_left_open: 'rear left door open',
-      door_rear_right_open: 'rear right door open',
-      window_front_left_open: 'front left window open',
-      window_front_right_open: 'front right window open',
-      window_rear_left_open: 'rear left window open',
-      window_rear_right_open: 'rear right window open',
-      hood_open: 'hood open',
-      trunk_open: 'trunk open',
-      sunroof_open: 'sunroof open',
-      sunroof_tilt: 'sunroof tilted'
-    };
-
     doorEntities.forEach((entityId) => {
       if (this._isDoorOverallEntity(entityId)) return;
       const state = this.hass?.states[entityId]?.state;
@@ -809,10 +812,33 @@ class BMWStatusCard extends LitElement {
       const sunroofState = this._getSunroofState(entityId, state);
       const key = this._getOpeningAssetKey(entityId, sunroofState, open);
       if (!key) return;
-      descriptions.add(labels[key] || key.replaceAll('_', ' '));
+      keys.add(key);
     });
 
-    return Array.from(descriptions.values());
+    return Array.from(keys.values()).sort();
+  }
+
+  private _buildStateRenderStateToken(entities: EntityInfo[]): string {
+    const keys = this._collectOpeningStateKeys(entities);
+    if (!keys.length) return 'closed';
+    const abbreviations: Record<string, string> = {
+      door_front_left_open: 'dfl',
+      door_front_right_open: 'dfr',
+      door_rear_left_open: 'drl',
+      door_rear_right_open: 'drr',
+      window_front_left_open: 'wfl',
+      window_front_right_open: 'wfr',
+      window_rear_left_open: 'wrl',
+      window_rear_right_open: 'wrr',
+      hood_open: 'hood',
+      trunk_open: 'trunk',
+      sunroof_open: 'sunopen',
+      sunroof_tilt: 'suntilt'
+    };
+    return keys
+      .map((key) => abbreviations[key] || this._slugify(key))
+      .join('-')
+      .slice(0, 56);
   }
 
   private _buildStateRenderPrompt(vehicleInfo: VehicleInfo, baseView: string, scene: CompositorScene, entities: EntityInfo[]): string {
@@ -845,15 +871,16 @@ class BMWStatusCard extends LitElement {
     const assetPrefixBase = this._buildCompositorAssetPrefix(vehicleInfo);
     const assetPrefix = bundleSuffix ? `${assetPrefixBase}-${bundleSuffix}` : assetPrefixBase;
     const baseStem = `${assetPrefix}_base`;
+    const openingStateKeys = this._collectOpeningStateKeys(entities);
+    const stateToken = this._buildStateRenderStateToken(entities);
     const stateHash = this._hash(
       JSON.stringify({
-        state: this._buildCompositeStateKey(),
+        openings: openingStateKeys,
         scene: context.scene,
-        view: context.view,
-        regenerateRequestId: regenerateRequestId || undefined
+        view: context.view
       })
     );
-    const stateFilename = `${assetPrefix}_state_render_${Math.abs(Number(stateHash) || 0)}.png`;
+    const stateFilename = `${assetPrefix}_state_render_${stateToken}_${Math.abs(Number(stateHash) || 0)}.png`;
 
     if ((providerPayload.type === 'gemini' || providerPayload.type === 'openai') && !providerPayload.api_key) {
       // eslint-disable-next-line no-console
@@ -877,6 +904,14 @@ class BMWStatusCard extends LitElement {
       prompt: statePrompt,
       format: 'png',
       postprocess: 'composite_with_base',
+      metadata: {
+        render_mode: 'state_render',
+        state_token: stateToken,
+        opening_states: openingStateKeys,
+        scene: context.scene,
+        view: context.view,
+        vehicle_name: vehicleInfo.name || undefined
+      },
       ...(inplaceMode && compositor.base_image ? { base_image: compositor.base_image } : {}),
       ...(inplaceMode && !compositor.base_image ? { base_ref: baseStem } : {})
     });
@@ -911,7 +946,11 @@ class BMWStatusCard extends LitElement {
         this._config = nextConfig;
       }
 
-      return stateItem?.local_url ? [String(stateItem.local_url)] : [];
+      if (!stateItem?.local_url) return [];
+      const stateUrl = String(stateItem.local_url);
+      if (!forceRegenerate) return [stateUrl];
+      const joiner = stateUrl.includes('?') ? '&' : '?';
+      return [`${stateUrl}${joiner}v=${Date.now()}`];
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn('[bmw-status-card] image_compositor state_render failed:', err);

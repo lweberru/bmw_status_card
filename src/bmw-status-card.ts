@@ -873,14 +873,7 @@ class BMWStatusCard extends LitElement {
     const baseStem = `${assetPrefix}_base`;
     const openingStateKeys = this._collectOpeningStateKeys(entities);
     const stateToken = this._buildStateRenderStateToken(entities);
-    const stateHash = this._hash(
-      JSON.stringify({
-        openings: openingStateKeys,
-        scene: context.scene,
-        view: context.view
-      })
-    );
-    const stateFilename = `${assetPrefix}_state_render_${stateToken}_${Math.abs(Number(stateHash) || 0)}.png`;
+    const stateFilename = `${assetPrefix}_state_render_${stateToken}.png`;
 
     if ((providerPayload.type === 'gemini' || providerPayload.type === 'openai') && !providerPayload.api_key) {
       // eslint-disable-next-line no-console
@@ -4165,14 +4158,6 @@ class BMWStatusCard extends LitElement {
             Fahrzeugkarte <strong>vehicle-status-card</strong> ist nicht geladen. Installiere die Karte oder setze
             <strong>vehicle_status_card_resource</strong>.
           </div>
-        </ha-card>
-      `;
-    }
-
-    if (!this._vehicleConfig) {
-      return html`
-        <ha-card>
-          <div class="message">BMW Status Card wird vorbereitet…</div>
         </ha-card>
       `;
     }

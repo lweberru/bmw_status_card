@@ -763,7 +763,12 @@ class BMWStatusCard extends LitElement {
   }
 
   private _describeOpeningsForStateRender(entities: EntityInfo[]): string[] {
-    const labels: Record<string, string> = {
+    const labels = this._openingStateLabels();
+    return this._collectOpeningStateKeys(entities).map((key) => labels[key] || key.replaceAll('_', ' '));
+  }
+
+  private _openingStateLabels(): Record<string, string> {
+    return {
       door_front_left_open: 'front left door open',
       door_front_right_open: 'front right door open',
       door_rear_left_open: 'rear left door open',
@@ -777,7 +782,6 @@ class BMWStatusCard extends LitElement {
       sunroof_open: 'sunroof open',
       sunroof_tilt: 'sunroof tilted'
     };
-    return this._collectOpeningStateKeys(entities).map((key) => labels[key] || key.replaceAll('_', ' '));
   }
 
   private _collectOpeningStateKeys(entities: EntityInfo[]): string[] {
@@ -843,12 +847,20 @@ class BMWStatusCard extends LitElement {
 
   private _buildStateRenderPrompt(vehicleInfo: VehicleInfo, baseView: string, scene: CompositorScene, entities: EntityInfo[]): string {
     const basePrompt = this._buildCompositorPrompt(vehicleInfo, baseView, scene);
-    const activeOpenings = this._describeOpeningsForStateRender(entities);
-    const openingsText = activeOpenings.length
-      ? activeOpenings.join(', ')
-      : 'all doors, windows, hood, trunk and sunroof closed';
+    const labels = this._openingStateLabels();
+    const allKeys = Object.keys(labels).sort();
+    const activeKeys = this._collectOpeningStateKeys(entities);
+    const activeSet = new Set(activeKeys);
+    const activeOpenings = activeKeys.map((key) => labels[key] || key.replaceAll('_', ' '));
+    const closedOpenings = allKeys
+      .filter((key) => !activeSet.has(key))
+      .map((key) => labels[key] || key.replaceAll('_', ' '));
 
-    return `${basePrompt}. Keep identical car identity, camera framing and background. Render current vehicle state: ${openingsText}. Return full-frame photorealistic image.`
+    const openingsInstruction = activeOpenings.length
+      ? `Open ONLY these parts: ${activeOpenings.join(', ')}. Keep CLOSED: ${closedOpenings.join(', ')}.`
+      : 'Keep all doors, windows, hood, trunk and sunroof CLOSED.';
+
+    return `${basePrompt}. Keep identical car identity, camera framing and background. Use vehicle-relative orientation (not camera-relative): left/right refer to the car itself. Do not mirror left and right. ${openingsInstruction} Never open any additional panel, door, window, hood, trunk or sunroof beyond the specified state. Return full-frame photorealistic image.`
       .replace(/\s+/g, ' ')
       .trim();
   }

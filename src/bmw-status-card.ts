@@ -163,6 +163,7 @@ class BMWStatusCard extends LitElement {
   private _lastCompositeStateKey?: string;
   private _deviceTrackerEntity?: string;
   private _autoGenerateOnce = false;
+  private _consumedRegenerateIds = new Set<string>();
   private _statusEntities?: {
     fuel?: string;
     motion?: string;
@@ -630,7 +631,7 @@ class BMWStatusCard extends LitElement {
     const assetPath = context.assetPath;
     const outputPath = context.outputPath;
     const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
-    const forceRegenerate = Boolean(regenerateRequestId);
+    const forceRegenerate = this._shouldForceRegenerateOnce(regenerateRequestId);
     const inplaceMode = ['openai', 'gemini'].includes(String(providerPayload.type));
     const bundleSuffix = context.bundleBySceneView ? `${context.view}-${context.scene}` : undefined;
     const assetPrefixBase = this._buildCompositorAssetPrefix(vehicleInfo);
@@ -877,7 +878,7 @@ class BMWStatusCard extends LitElement {
     const baseView = context.baseView;
     const assetPath = context.assetPath;
     const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
-    const forceRegenerate = Boolean(regenerateRequestId);
+    const forceRegenerate = this._shouldForceRegenerateOnce(regenerateRequestId);
     const inplaceMode = ['openai', 'gemini'].includes(String(providerPayload.type));
     const bundleSuffix = context.bundleBySceneView ? `${context.view}-${context.scene}` : undefined;
     const assetPrefixBase = this._buildCompositorAssetPrefix(vehicleInfo);
@@ -1112,6 +1113,32 @@ class BMWStatusCard extends LitElement {
     if (!left) return right;
     if (!right) return left;
     return `${left}/${right}`;
+  }
+
+  private _shouldForceRegenerateOnce(regenerateRequestId?: string): boolean {
+    const token = String(regenerateRequestId || '').trim();
+    if (!token) return false;
+    if (this._consumedRegenerateIds.has(token)) return false;
+
+    const scope =
+      this._config?.bmw_cardata_device_id ||
+      this._config?.bmw_home_device_id ||
+      this._config?.type ||
+      'default';
+    const storageKey = `bmw-status-card:regenerate-consumed:${scope}:${token}`;
+
+    try {
+      if (localStorage.getItem(storageKey) === '1') {
+        this._consumedRegenerateIds.add(token);
+        return false;
+      }
+      localStorage.setItem(storageKey, '1');
+    } catch (_) {
+      // ignore storage access errors
+    }
+
+    this._consumedRegenerateIds.add(token);
+    return true;
   }
 
   private _buildCompositorAssets(
@@ -1501,7 +1528,7 @@ class BMWStatusCard extends LitElement {
     const outputPath = this._appendPathSegment(compositor.output_path || 'www/image_compositor', 'tire_topdown');
     const baseStem = `${assetPrefix}_base`;
     const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
-    const forceRegenerate = Boolean(regenerateRequestId);
+    const forceRegenerate = this._shouldForceRegenerateOnce(regenerateRequestId);
 
     const assets: Array<Record<string, any>> = [
       {

@@ -785,6 +785,23 @@ class BMWStatusCard extends LitElement {
     };
   }
 
+  private _closedStateLabels(): Record<string, string> {
+    return {
+      door_front_left_open: 'front left door',
+      door_front_right_open: 'front right door',
+      door_rear_left_open: 'rear left door',
+      door_rear_right_open: 'rear right door',
+      window_front_left_open: 'front left window',
+      window_front_right_open: 'front right window',
+      window_rear_left_open: 'rear left window',
+      window_rear_right_open: 'rear right window',
+      hood_open: 'hood',
+      trunk_open: 'trunk',
+      sunroof_open: 'sunroof',
+      sunroof_tilt: 'sunroof'
+    };
+  }
+
   private _collectOpeningStateKeys(entities: EntityInfo[]): string[] {
     const keys = new Set<string>();
     const doorEntities = this._pickEntities(entities, new Set(), ['binary_sensor', 'sensor', 'cover'], [
@@ -848,14 +865,15 @@ class BMWStatusCard extends LitElement {
 
   private _buildStateRenderPrompt(vehicleInfo: VehicleInfo, baseView: string, scene: CompositorScene, entities: EntityInfo[]): string {
     const basePrompt = this._buildCompositorPrompt(vehicleInfo, baseView, scene);
-    const labels = this._openingStateLabels();
-    const allKeys = Object.keys(labels).sort();
+    const openLabels = this._openingStateLabels();
+    const closedLabels = this._closedStateLabels();
+    const allKeys = Object.keys(openLabels).sort();
     const activeKeys = this._collectOpeningStateKeys(entities);
     const activeSet = new Set(activeKeys);
-    const activeOpenings = activeKeys.map((key) => labels[key] || key.replaceAll('_', ' '));
+    const activeOpenings = activeKeys.map((key) => openLabels[key] || key.replaceAll('_', ' '));
     const closedOpenings = allKeys
       .filter((key) => !activeSet.has(key))
-      .map((key) => labels[key] || key.replaceAll('_', ' '));
+      .map((key) => closedLabels[key] || key.replaceAll('_', ' '));
 
     const openingsInstruction = activeOpenings.length
       ? `Open ONLY these parts: ${activeOpenings.join(', ')}. Keep CLOSED: ${closedOpenings.join(', ')}.`
@@ -2853,10 +2871,27 @@ class BMWStatusCard extends LitElement {
       'pwf status',
       'pwf_status'
     ]);
-    let motion = pwfStatus;
+    const preferredMotionBinary = this._findEntity(
+      entities,
+      ['binary_sensor'],
+      ['vehicle_motion_state', 'vehicle motion state', 'motion_state', 'motion state'],
+      new Set()
+    )?.entity_id;
+
+    let motion = preferredMotionBinary;
     if (motion && this._isEntityUnavailable(entities, motion)) {
-      used.delete(motion);
       motion = undefined;
+    }
+    if (motion) {
+      used.add(motion);
+    }
+
+    if (!motion) {
+      motion = pwfStatus;
+      if (motion && this._isEntityUnavailable(entities, motion)) {
+        used.delete(motion);
+        motion = undefined;
+      }
     }
     if (!motion) {
       motion = this._pickEntity(entities, used, ['binary_sensor', 'sensor'], [

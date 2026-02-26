@@ -724,6 +724,12 @@ class BMWStatusCard extends LitElement {
       })
     );
     const composeOutputName = `${assetPrefix}_state_${Math.abs(Number(cacheKey) || 0)}.png`;
+    if (!forceRegenerate) {
+      const composedExists = await this._compositorFileExists(outputPath, composeOutputName);
+      if (composedExists === true) {
+        return [this._buildCompositorLocalUrl(outputPath, composeOutputName)];
+      }
+    }
 
     try {
       const response = await this.hass.callWS({
@@ -905,6 +911,12 @@ class BMWStatusCard extends LitElement {
     const openingStateKeys = this._collectOpeningStateKeys(entities);
     const stateToken = this._buildStateRenderStateToken(entities);
     const stateFilename = `${assetPrefix}_state_render_${stateToken}.png`;
+    if (!forceRegenerate) {
+      const cachedStateExists = await this._compositorFileExists(assetPath, stateFilename);
+      if (cachedStateExists === true) {
+        return [this._buildCompositorLocalUrl(assetPath, stateFilename)];
+      }
+    }
 
     if ((providerPayload.type === 'gemini' || providerPayload.type === 'openai') && !providerPayload.api_key) {
       // eslint-disable-next-line no-console
@@ -1131,6 +1143,36 @@ class BMWStatusCard extends LitElement {
     if (!left) return right;
     if (!right) return left;
     return `${left}/${right}`;
+  }
+
+  private _buildCompositorLocalUrl(outputPath: string, filename: string): string {
+    const normalizedPath = String(outputPath || '')
+      .trim()
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '');
+    const localPath = normalizedPath.startsWith('www/') ? normalizedPath.slice(4) : normalizedPath;
+    return localPath ? `/local/${localPath}/${filename}` : `/local/${filename}`;
+  }
+
+  private async _compositorFileExists(outputPath: string, filename: string): Promise<boolean | undefined> {
+    if (!this.hass || !outputPath || !filename) return undefined;
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'image_compositor',
+        service: 'file_exists',
+        service_data: {
+          path: outputPath,
+          filename
+        },
+        return_response: true
+      });
+      const payload = response?.response ?? response?.result ?? response;
+      if (typeof payload?.exists === 'boolean') return payload.exists;
+      return undefined;
+    } catch (_) {
+      return undefined;
+    }
   }
 
   private _shouldForceRegenerateOnce(regenerateRequestId?: string): boolean {
@@ -1521,9 +1563,11 @@ class BMWStatusCard extends LitElement {
     const plateLock = plate ? `License plate text must remain: ${plate}.` : '';
 
     return (
-      `High-quality photo of ${identity}, top-down view, directly above, centered, orthographic, ` +
-      `clean studio floor background, front of the car at the bottom of the image, driver side on the left. ` +
-      `${brandLock} ${plateLock}`
+      `High-quality photo of ${identity}, STRICT top-down orthographic view, camera exactly 90 degrees above the car, centered, no perspective tilt. ` +
+      `Car longitudinal axis must be perfectly vertical in the image: front bumper at the TOP edge, rear bumper at the BOTTOM edge. ` +
+      `Vehicle left side must appear on the LEFT side of the image, vehicle right side on the RIGHT side. ` +
+      `Do NOT rotate, skew, mirror, or place diagonally. No angled, 3/4, side, or perspective view. ` +
+      `Clean neutral studio floor background. ${brandLock} ${plateLock}`
     )
       .replace(/\s+/g, ' ')
       .trim();
@@ -3754,10 +3798,10 @@ class BMWStatusCard extends LitElement {
     const tire_card = {
       title: 'Reifendruck',
       ...(tireImage ? { background: tireImage } : {}),
-      front_left: rearLeftConfig?.config,
-      front_right: rearRightConfig?.config,
-      rear_left: frontLeftConfig?.config,
-      rear_right: frontRightConfig?.config
+      front_left: frontLeftConfig?.config,
+      front_right: frontRightConfig?.config,
+      rear_left: rearLeftConfig?.config,
+      rear_right: rearRightConfig?.config
     };
 
     return { tire_card, entities: [...entitiesUsed, ...targetEntitiesUsed] };
@@ -4175,11 +4219,20 @@ class BMWStatusCard extends LitElement {
   }
 
   private _tirePositionKey(entityId: string): string | undefined {
-    const text = this._normalizeText(entityId);
-    if (text.includes('front') && text.includes('left')) return 'front_left';
-    if (text.includes('front') && text.includes('right')) return 'front_right';
-    if (text.includes('rear') && text.includes('left')) return 'rear_left';
-    if (text.includes('rear') && text.includes('right')) return 'rear_right';
+    const state = this.hass?.states[entityId];
+    const friendly = String(state?.attributes?.friendly_name || '').trim();
+    const text = this._normalizeText(`${entityId} ${friendly}`);
+
+    const hasLeft = text.includes('left') || text.includes('links') || text.includes('driver');
+    const hasRight = text.includes('right') || text.includes('rechts') || text.includes('passenger');
+    const hasFront = text.includes('front') || text.includes('vorn') || text.includes('axle 1') || text.includes('row1');
+    const hasRear = text.includes('rear') || text.includes('hinten') || text.includes('axle 2') || text.includes('row2');
+
+    if (hasFront && hasLeft) return 'front_left';
+    if (hasFront && hasRight) return 'front_right';
+    if (hasRear && hasLeft) return 'rear_left';
+    if (hasRear && hasRight) return 'rear_right';
+
     return undefined;
   }
 

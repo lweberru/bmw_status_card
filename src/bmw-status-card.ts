@@ -1588,7 +1588,9 @@ class BMWStatusCard extends LitElement {
     const assetPrefix = `${this._buildCompositorAssetPrefix(vehicleInfo)}-tire`;
     const assetPath = this._appendPathSegment(compositor.asset_path || 'www/image_compositor/assets', 'tire_topdown');
     const outputPath = this._appendPathSegment(compositor.output_path || 'www/image_compositor', 'tire_topdown');
-    const baseStem = `${assetPrefix}_base`;
+    const tireBasePrompt = this._buildTireTopDownBasePrompt(vehicleInfo);
+    const tireBaseRevision = Math.abs(Number(this._hash(tireBasePrompt)) || 0);
+    const baseStem = `${assetPrefix}_base_${tireBaseRevision}`;
     const regenerateRequestId = String(compositor.regenerate_request_id || '').trim();
     const forceRegenerate = this._shouldForceRegenerateOnce(regenerateRequestId);
 
@@ -1596,7 +1598,7 @@ class BMWStatusCard extends LitElement {
       {
         name: 'tire_base',
         filename: `${baseStem}.png`,
-        prompt: this._buildTireTopDownBasePrompt(vehicleInfo),
+        prompt: tireBasePrompt,
         format: 'png'
       },
       {
@@ -1666,6 +1668,7 @@ class BMWStatusCard extends LitElement {
       JSON.stringify({
         assetPath,
         outputPath,
+        tireBaseRevision,
         tireStatus,
         regenerateRequestId: regenerateRequestId || undefined
       })

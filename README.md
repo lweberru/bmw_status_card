@@ -1,6 +1,6 @@
 # BMW Status Card
 
-Version: 0.2.1
+Version: 0.2.2
 
 Eine Lovelace-Karte fuer die versionierte Fahrzeug-Praesentation der `bmw_status`-Integration. Die Karte liest ausschliesslich einen BMW-Status-Sensor und rendert dessen `presentation`-Attribut. CarData-Auswahl, Fachlogik, Bildgenerierung, Caching und Provider-Zugangsdaten bleiben im Backend.
 

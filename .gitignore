@@ -1,6 +1,7 @@
 # Node / Frontend
 node_modules/
-dist/
+dist/*
+!dist/bmw-status-card.js
 coverage/
 
 # macOS

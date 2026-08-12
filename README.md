@@ -1,40 +1,59 @@
 # BMW Status Card
 
+[Deutsch](README.de.md) | [BMW Status backend](https://github.com/lweberru/bmw_status)
+
+BMW Status Card is the Lovelace frontend for the
+[BMW Status](https://github.com/lweberru/bmw_status) Home Assistant integration.
+The two repositories form one solution: the backend owns vehicle discovery,
+provider access, semantic classification, maps and visual-asset caching; this
+card renders only the backend's versioned presentation.
+
 Version: 0.2.4
 
-Eine Lovelace-Karte fuer die versionierte Fahrzeug-Praesentation der `bmw_status`-Integration. Die Karte liest ausschliesslich einen BMW-Status-Sensor und rendert dessen `presentation`-Attribut. CarData-Auswahl, Fachlogik, Bildgenerierung, Caching und Provider-Zugangsdaten bleiben im Backend.
+![BMW Status Card screenshot](bmw_status_card.png)
 
-## Voraussetzungen
+## Features
 
-- Die Custom Integration `bmw_status` ist eingerichtet.
-- Pro Fahrzeug existiert genau ein `bmw_status`-Config Entry und dessen Sensor, zum Beispiel `sensor.status`.
+- Vehicle overview with energy, fuel, range, odometer and lock state.
+- Server-rendered vehicle and location images without browser-side provider keys.
+- Semantic warning badges for relevant vehicle conditions.
+- Full-width tire-pressure view with actual and target values per wheel.
+- Opening, service and climate summaries.
+
+## Requirements
+
+1. Install and configure the [BMW Status backend](https://github.com/lweberru/bmw_status)
+   as a HACS **Integration**.
+2. Complete its setup for one vehicle. It exposes a BMW Status sensor, for
+   example `sensor.status`.
+3. Install this repository through HACS as a **Frontend** plugin.
 
 ## Installation
 
-1. Dieses Repository als HACS-Frontend-Plugin hinzufuegen.
-2. Die Ressource als Modul laden:
-   - URL: `/hacsfiles/bmw_status_card/bmw-status-card.js`
-   - Typ: `module`
+Add the Lovelace resource as a module if HACS has not added it automatically:
 
-## Konfiguration
+- URL: `/hacsfiles/bmw_status_card/bmw-status-card.js`
+- Type: `module`
+
+## Configuration
 
 ```yaml
 type: custom:bmw-status-card
 entity: sensor.status
 ```
 
-Die Positionskarte wird serverseitig durch `bmw_status` erzeugt und als lokales
-Bild aus dem Praesentationsvertrag gerendert. Die Karte braucht keinen
-MapTiler-Schluessel und nimmt keine Map-Konfiguration entgegen.
+The entity must be the sensor provided by BMW Status. The card reads only its
+`attributes.presentation` value. It does not call CarData, external providers or
+map APIs from the browser and does not accept provider credentials.
 
-## Backendvertrag
+## Presentation contract
 
-Die Karte erwartet `schema_version: 1` und liest die folgenden Werte aus `attributes.presentation`:
+BMW Status publishes schema version `1`. The card renders these semantic values:
 
-- `vehicle`, `status` und `electrification`
-- `entities` fuer Kennzahlen wie Ladezustand, Tank und Reichweite
-- `groups` fuer Oeffnungen, Reifen und Klima
-- `badges` fuer semantische Warnungen
-- `images` fuer serverseitig erzeugte und gecachte Fahrzeugbilder
+- `vehicle`, `status` and `electrification`
+- `entities` for energy, fuel, range, odometer and lock state
+- `groups` for openings, tires, service and climate
+- `badges` for semantic warnings
+- `images` and `location_image` for backend-generated, locally cached assets
 
-Bei einer kuenftigen inkompatiblen Schema-Version zeigt die Karte keine heuristisch ermittelten CarData-Entities an; die Backend-Integration bleibt die alleinige Quelle fuer die Praesentation.
+Update the backend and frontend together when a release changes this contract.

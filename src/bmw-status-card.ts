@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.3';
+const VERSION = '0.2.4';
 
 type HassState = {
   state: string;
@@ -44,13 +44,13 @@ type Presentation = {
   groups?: Record<string, EntityData[] | undefined>;
   badges?: Badge[];
   images?: string[];
+  tire_image?: string;
+  location_image?: string;
 };
 
 type BMWStatusCardConfig = {
   type: string;
   entity: string;
-  maptiler_api_key?: string;
-  maptiler_style?: string;
 };
 
 class BMWStatusCard extends LitElement {
@@ -90,23 +90,31 @@ class BMWStatusCard extends LitElement {
     .badge.alert { border-color: #bc3030; background: #fff0f0; color: #8a1f1f; }
     .summary { padding: 11px; display: grid; gap: 8px; }
     .summary-status { color: var(--primary-text-color); font-size: 14px; font-weight: 700; }
+    .summary-detail { color: var(--secondary-text-color); font-size: 13px; line-height: 1.4; }
     .summary-items { display: flex; flex-wrap: wrap; gap: 6px; }
     .summary-item { padding: 5px 7px; border: 1px solid var(--divider-color); color: var(--secondary-text-color); font-size: 12px; }
     .summary-item strong { color: var(--primary-text-color); }
-    .tire-board { position: relative; min-height: 276px; margin: 12px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); }
+    .tire-board { position: relative; aspect-ratio: 1; margin: 12px; overflow: hidden; border: 1px solid var(--divider-color); background: #f6f6f4; }
     .car-top { position: absolute; top: 18px; bottom: 18px; left: 50%; width: 34%; min-width: 104px; transform: translateX(-50%); border: 2px solid var(--primary-text-color); border-radius: 44% 44% 30% 30%; background: var(--card-background-color); }
+    .tire-vehicle-image { position: absolute; inset: 0; box-sizing: border-box; width: 100%; height: 100%; padding: 7px; object-fit: contain; object-position: center; }
     .car-top::before { content: ''; position: absolute; top: 20%; left: 13%; width: 74%; height: 38%; border: 1px solid var(--divider-color); border-radius: 40% 40% 14% 14%; background: var(--secondary-background-color); }
     .car-top::after { content: 'Vorne'; position: absolute; top: 7px; left: 50%; transform: translateX(-50%); color: var(--secondary-text-color); font-size: 11px; font-weight: 700; }
-    .wheel { position: absolute; width: 34%; max-width: 138px; padding: 7px; border-left: 3px solid var(--primary-color, #007a3d); background: var(--card-background-color); color: var(--primary-text-color); font-size: 12px; box-sizing: border-box; }
-    .wheel-position { display: block; color: var(--secondary-text-color); font-size: 11px; }
-    .wheel-value { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; font-weight: 700; }
-    .wheel-value span:last-child { color: var(--secondary-text-color); font-weight: 600; }
-    .front-left { top: 34px; left: 9px; } .front-right { top: 34px; right: 9px; } .rear-left { bottom: 34px; left: 9px; } .rear-right { bottom: 34px; right: 9px; }
-    .map { width: 100%; aspect-ratio: 16 / 7; object-fit: cover; border: 0; background: var(--secondary-background-color); display: block; }
+    .wheel { position: absolute; width: 34%; max-width: 172px; padding: 5px 6px; border: 1px solid rgba(32, 42, 34, .24); border-left: 4px solid var(--primary-color, #007a3d); border-radius: 4px; background: rgba(255,255,255,.92); box-shadow: 0 1px 5px rgba(0,0,0,.18); color: #1d251f; font-size: 12px; box-sizing: border-box; }
+    .wheel.warning { border-left-color: #c88716; } .wheel.alert { border-left-color: #bb3030; }
+    .wheel-position { display: block; color: #58625a; font-size: 10px; font-weight: 700; }
+    .wheel-value { display: grid; gap: 2px; margin-top: 3px; }
+    .wheel-value span { display: flex; align-items: baseline; justify-content: space-between; gap: 2px; font-size: 9px; color: #58625a; }
+    .wheel-value strong { color: #1d251f; font-size: 11px; white-space: nowrap; }
+    .pressure-state { margin-top: 3px; font-size: 9px; font-weight: 700; color: #237047; }
+    .wheel.warning .pressure-state { color: #8b5b00; } .wheel.alert .pressure-state { color: #a52323; }
+    .front-left { top: 8px; left: 7px; } .front-right { top: 8px; right: 7px; } .rear-left { bottom: 8px; left: 7px; } .rear-right { bottom: 8px; right: 7px; }
+    .map-wrap { position: relative; background: var(--secondary-background-color); }
+    .map { width: 100%; aspect-ratio: 16 / 7; object-fit: cover; border: 0; display: block; }
+    .map-marker { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; transform: translate(-50%, -50%); border: 3px solid #fff; border-radius: 50% 50% 50% 0; background: #c12828; box-shadow: 0 1px 5px rgba(0,0,0,.45); rotate: -45deg; }
     .map-unavailable { padding: 12px; color: var(--secondary-text-color); font-size: 13px; line-height: 1.4; }
     .message { padding: 16px; color: var(--secondary-text-color); }
     .error { color: var(--error-color, #b3261e); }
-    @media (min-width: 520px) { .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } .group-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .tire-board { min-height: 300px; } }
+    @media (min-width: 520px) { .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } .group-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } }
   `;
 
   set hass(hass: HomeAssistant) {
@@ -156,19 +164,6 @@ class BMWStatusCard extends LitElement {
     return !value || ['unknown', 'unavailable', 'none'].includes(value.toLowerCase());
   }
 
-  private _mapUrl(presentation: Presentation): string | undefined {
-    const key = this._config?.maptiler_api_key?.trim();
-    const trackerId = presentation.entities?.device_tracker?.entity_id;
-    const tracker = trackerId ? this.hass?.states[trackerId] : undefined;
-    const latitude = Number(tracker?.attributes.latitude);
-    const longitude = Number(tracker?.attributes.longitude);
-    if (!key || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return undefined;
-    const style = encodeURIComponent(this._config?.maptiler_style?.trim() || 'streets-v2');
-    const point = `${longitude},${latitude},14`;
-    const marker = encodeURIComponent(`${longitude},${latitude},red`);
-    return `https://api.maptiler.com/maps/${style}/static/${point}/640x280.png?markers=${marker}&key=${encodeURIComponent(key)}`;
-  }
-
   private _metric(label: string, entity?: EntityData) {
     const value = this._value(entity);
     return value ? html`<div class="metric"><div class="metric-name">${label}</div><div class="metric-value">${value}</div></div>` : nothing;
@@ -190,29 +185,53 @@ class BMWStatusCard extends LitElement {
       <section class="panel">
         <div class="panel-heading"><span>${title}</span></div>
         <div class="summary">
-          <div class="summary-status">${visible.length} Signale verfügbar</div>
+          <div class="summary-status">${title}</div>
           <div class="summary-items">
             ${visible.slice(0, maxItems).map((entry) => html`<span class="summary-item"><strong>${this._label(entry)}</strong> ${this._value(entry)}</span>`)}
-            ${visible.length > maxItems ? html`<span class="summary-item">+${visible.length - maxItems} weitere</span>` : nothing}
+            ${visible.length > maxItems ? html`<span class="summary-item">Weitere Werte sind in Home Assistant verfügbar</span>` : nothing}
           </div>
         </div>
       </section>
     `;
   }
 
+  private _openingKey(entry: EntityData): string {
+    const text = `${entry.entity_id} ${entry.name}`.toLowerCase();
+    if (text.includes('sunroof')) return 'sunroof';
+    if (text.includes('tailgate') || text.includes('trunk')) return 'tailgate';
+    if (text.includes('hood')) return 'hood';
+    if (text.includes('front') && text.includes('driver')) return 'front-driver';
+    if (text.includes('front') && text.includes('passenger')) return 'front-passenger';
+    if (text.includes('rear') && text.includes('driver')) return 'rear-driver';
+    if (text.includes('rear') && text.includes('passenger')) return 'rear-passenger';
+    return entry.entity_id;
+  }
+
   private _openings(entries?: EntityData[]) {
     const visible = (entries || []).filter((entry) => !this._isUnavailable(entry.state));
     if (!visible.length) return nothing;
-    const open = visible.filter((entry) => this._isOpen(entry));
+    const openByPart = new Map<string, EntityData>();
+    visible.filter((entry) => this._isOpen(entry)).forEach((entry) => openByPart.set(this._openingKey(entry), entry));
+    const open = [...openByPart.values()];
     return html`
       <section class="panel">
         <div class="panel-heading"><span>Öffnungen</span></div>
         <div class="summary">
-          <div class="summary-status">${open.length ? `${open.length} geöffnet` : 'Alles geschlossen'}</div>
-          ${open.length ? html`<div class="summary-items">${open.map((entry) => html`<span class="summary-item"><strong>${this._label(entry)}</strong></span>`)}</div>` : nothing}
+          <div class="summary-status">${open.length ? 'Geöffnet' : 'Alles geschlossen'}</div>
+          <div class="summary-detail">${open.length ? open.map((entry) => this._label(entry)).join(', ') : 'Türen, Fenster, Motorhaube und Heckklappe sind geschlossen.'}</div>
         </div>
       </section>
     `;
+  }
+
+  private _climate(entries?: EntityData[]) {
+    const visible = (entries || []).filter((entry) => !this._isUnavailable(entry.state));
+    if (!visible.length) return nothing;
+    const active = visible.filter((entry) => ['on', 'active', 'running', 'heating', 'cooling'].includes(entry.state.toLowerCase()));
+    const nextTimer = visible.find((entry) => /next.*state|timer.*next/i.test(`${entry.entity_id} ${entry.name}`));
+    const status = active.length ? 'Klimatisierung aktiv' : 'Klimatisierung aus';
+    const detail = active.length ? active.map((entry) => this._label(entry)).join(', ') : nextTimer ? `${this._label(nextTimer)}: ${this._value(nextTimer)}` : 'Keine Vorklimatisierung geplant.';
+    return html`<section class="panel"><div class="panel-heading"><span>Klima</span></div><div class="summary"><div class="summary-status">${status}</div><div class="summary-detail">${detail}</div></div></section>`;
   }
 
   private _tirePosition(entry: EntityData): string {
@@ -223,22 +242,46 @@ class BMWStatusCard extends LitElement {
     return `${axle} ${side}`.trim() || 'Unbekannt';
   }
 
-  private _tires(entries?: EntityData[]) {
+  private _tireClass(position: string): string {
+    const normalized = position.toLowerCase();
+    const axle = normalized.includes('vorne') ? 'front' : normalized.includes('hinten') ? 'rear' : '';
+    const side = normalized.includes('links') ? 'left' : normalized.includes('rechts') ? 'right' : '';
+    return axle && side ? `${axle}-${side}` : '';
+  }
+
+  private _pressureState(actual: EntityData, target?: EntityData): { level: '' | 'warning' | 'alert'; label: string } {
+    const actualValue = Number.parseFloat(actual.state);
+    const targetValue = target ? Number.parseFloat(target.state) : Number.NaN;
+    if (!Number.isFinite(actualValue) || !Number.isFinite(targetValue)) return { level: '', label: 'Sollwert nicht verfügbar' };
+    const difference = Math.abs(actualValue - targetValue);
+    if (difference >= 40) return { level: 'alert', label: `${difference} kPa Abweichung` };
+    if (difference >= 20) return { level: 'warning', label: `${difference} kPa Abweichung` };
+    return { level: '', label: 'Druck im Sollbereich' };
+  }
+
+  private _tires(entries?: EntityData[], tireImage?: string) {
     const visible = (entries || []).filter((entry) => !this._isUnavailable(entry.state));
     const actual = visible.filter((entry) => entry.role === 'actual' || (!entry.role && !/target|soll/i.test(`${entry.name} ${entry.entity_id}`)));
     if (!actual.length) return nothing;
     const target = visible.filter((entry) => entry.role === 'target' || (!entry.role && /target|soll/i.test(`${entry.name} ${entry.entity_id}`)));
     const targetByPosition = new Map(target.map((entry) => [this._tirePosition(entry), entry]));
-    const classFor = (position: string) => position.toLowerCase().replace('vorne', 'front').replace('hinten', 'rear').replace(' ', '-');
     return html`
       <section class="panel">
         <div class="panel-heading"><span>Reifendruck</span></div>
         <div class="tire-board">
-          <div class="car-top"></div>
+          ${tireImage ? html`<img class="tire-vehicle-image" src=${tireImage} alt="Fahrzeug von oben" />` : html`<div class="car-top"></div>`}
           ${actual.map((entry) => {
             const position = this._tirePosition(entry);
             const desired = targetByPosition.get(position);
-            return html`<div class="wheel ${classFor(position)}"><span class="wheel-position">${position}</span><div class="wheel-value"><span>${this._value(entry)}</span><span>Soll ${this._value(desired) || '-'}</span></div></div>`;
+            const pressure = this._pressureState(entry, desired);
+            return html`<div class="wheel ${this._tireClass(position)} ${pressure.level}">
+              <span class="wheel-position">${position}</span>
+              <div class="wheel-value">
+                <span>Ist<strong>${this._value(entry) || '-'}</strong></span>
+                <span>Soll<strong>${this._value(desired) || '-'}</strong></span>
+              </div>
+              <div class="pressure-state">${pressure.label}</div>
+            </div>`;
           })}
         </div>
       </section>
@@ -257,7 +300,7 @@ class BMWStatusCard extends LitElement {
     const image = presentation.images?.[0];
     const title = vehicle.name || [vehicle.manufacturer, vehicle.model].filter(Boolean).join(' ') || 'BMW';
     const subtitle = [vehicle.model, vehicle.license_plate].filter(Boolean).join(' · ');
-    const mapUrl = this._mapUrl(presentation);
+    const mapUrl = presentation.location_image;
     const statusKey = status.key || 'unknown';
 
     return html`
@@ -288,14 +331,14 @@ class BMWStatusCard extends LitElement {
           <section class="panel">
             <div class="panel-heading"><span>Fahrzeugposition</span></div>
             ${mapUrl
-              ? html`<img class="map" src=${mapUrl} alt="Fahrzeugposition" />`
-              : html`<div class="map-unavailable">Für die Positionskarte einen MapTiler API-Key in der Kartenkonfiguration hinterlegen.</div>`}
+              ? html`<div class="map-wrap"><img class="map" src=${mapUrl} alt="Fahrzeugposition" /><span class="map-marker" aria-label="Fahrzeugposition"></span></div>`
+              : html`<div class="map-unavailable">Die Positionskarte wird vorbereitet.</div>`}
           </section>
+          ${this._tires(presentation.groups?.tires, presentation.tire_image)}
           <div class="group-grid">
             ${this._openings(presentation.groups?.doors)}
-            ${this._tires(presentation.groups?.tires)}
             ${this._summary('Service', presentation.groups?.service, 2)}
-            ${this._summary('Klima', presentation.groups?.climate, 2)}
+            ${this._climate(presentation.groups?.climate)}
           </div>
         </div>
       </ha-card>
@@ -337,8 +380,6 @@ class BMWStatusCardEditor extends LitElement {
     return html`
       <div class="fields">
         <label>BMW-Status-Sensor<input data-key="entity" .value=${config.entity || ''} @input=${this._onInput} placeholder="sensor.status" /></label>
-        <label>MapTiler API-Key (optional)<input data-key="maptiler_api_key" .value=${config.maptiler_api_key || ''} @input=${this._onInput} /></label>
-        <label>MapTiler Style (optional)<input data-key="maptiler_style" .value=${config.maptiler_style || ''} @input=${this._onInput} placeholder="streets-v2" /></label>
       </div>
     `;
   }

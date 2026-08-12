@@ -1,6 +1,6 @@
 # BMW Status Card
 
-Version: 0.2.3
+Version: 0.2.4
 
 Eine Lovelace-Karte fuer die versionierte Fahrzeug-Praesentation der `bmw_status`-Integration. Die Karte liest ausschliesslich einen BMW-Status-Sensor und rendert dessen `presentation`-Attribut. CarData-Auswahl, Fachlogik, Bildgenerierung, Caching und Provider-Zugangsdaten bleiben im Backend.
 
@@ -23,16 +23,9 @@ type: custom:bmw-status-card
 entity: sensor.status
 ```
 
-Optional kann die Karte eine statische Positionskarte von MapTiler anzeigen. Der Key bleibt ausschliesslich in der Kartenkonfiguration und wird weder im `bmw_status`-Config Entry gespeichert noch ueber den Sensor veroeffentlicht.
-
-```yaml
-type: custom:bmw-status-card
-entity: sensor.status
-maptiler_api_key: !secret maptiler_key
-maptiler_style: streets-v2
-```
-
-MapTiler-Keys sind im Browser sichtbar. Verwende daher ausschliesslich einen auf deine Home-Assistant-Instanz eingeschraenkten Key.
+Die Positionskarte wird serverseitig durch `bmw_status` erzeugt und als lokales
+Bild aus dem Praesentationsvertrag gerendert. Die Karte braucht keinen
+MapTiler-Schluessel und nimmt keine Map-Konfiguration entgegen.
 
 ## Backendvertrag
 

@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 
 type HassState = {
   state: string;
@@ -17,6 +17,9 @@ type EntityData = {
   name: string;
   state: string;
   unit?: string;
+  label?: string;
+  position?: string;
+  role?: 'actual' | 'target' | string;
 };
 
 type Badge = {
@@ -85,14 +88,25 @@ class BMWStatusCard extends LitElement {
     .badges { display: flex; flex-wrap: wrap; gap: 7px; }
     .badge { padding: 5px 8px; border: 1px solid #c88a21; border-radius: 3px; background: #fff7df; color: #604100; font-size: 12px; font-weight: 700; }
     .badge.alert { border-color: #bc3030; background: #fff0f0; color: #8a1f1f; }
-    .list { display: grid; gap: 1px; background: var(--divider-color); }
-    .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 10px; color: var(--primary-text-color); background: var(--card-background-color); font-size: 14px; }
-    .row span:last-child { flex: 0 0 auto; text-align: right; color: var(--secondary-text-color); font-weight: 700; }
-    .map { width: 100%; aspect-ratio: 16 / 8; object-fit: cover; border: 0; background: var(--secondary-background-color); display: block; }
+    .summary { padding: 11px; display: grid; gap: 8px; }
+    .summary-status { color: var(--primary-text-color); font-size: 14px; font-weight: 700; }
+    .summary-items { display: flex; flex-wrap: wrap; gap: 6px; }
+    .summary-item { padding: 5px 7px; border: 1px solid var(--divider-color); color: var(--secondary-text-color); font-size: 12px; }
+    .summary-item strong { color: var(--primary-text-color); }
+    .tire-board { position: relative; min-height: 276px; margin: 12px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); }
+    .car-top { position: absolute; top: 18px; bottom: 18px; left: 50%; width: 34%; min-width: 104px; transform: translateX(-50%); border: 2px solid var(--primary-text-color); border-radius: 44% 44% 30% 30%; background: var(--card-background-color); }
+    .car-top::before { content: ''; position: absolute; top: 20%; left: 13%; width: 74%; height: 38%; border: 1px solid var(--divider-color); border-radius: 40% 40% 14% 14%; background: var(--secondary-background-color); }
+    .car-top::after { content: 'Vorne'; position: absolute; top: 7px; left: 50%; transform: translateX(-50%); color: var(--secondary-text-color); font-size: 11px; font-weight: 700; }
+    .wheel { position: absolute; width: 34%; max-width: 138px; padding: 7px; border-left: 3px solid var(--primary-color, #007a3d); background: var(--card-background-color); color: var(--primary-text-color); font-size: 12px; box-sizing: border-box; }
+    .wheel-position { display: block; color: var(--secondary-text-color); font-size: 11px; }
+    .wheel-value { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; font-weight: 700; }
+    .wheel-value span:last-child { color: var(--secondary-text-color); font-weight: 600; }
+    .front-left { top: 34px; left: 9px; } .front-right { top: 34px; right: 9px; } .rear-left { bottom: 34px; left: 9px; } .rear-right { bottom: 34px; right: 9px; }
+    .map { width: 100%; aspect-ratio: 16 / 7; object-fit: cover; border: 0; background: var(--secondary-background-color); display: block; }
     .map-unavailable { padding: 12px; color: var(--secondary-text-color); font-size: 13px; line-height: 1.4; }
     .message { padding: 16px; color: var(--secondary-text-color); }
     .error { color: var(--error-color, #b3261e); }
-    @media (min-width: 520px) { .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } .group-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } }
+    @media (min-width: 520px) { .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } .group-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .tire-board { min-height: 300px; } }
   `;
 
   set hass(hass: HomeAssistant) {
@@ -151,7 +165,8 @@ class BMWStatusCard extends LitElement {
     if (!key || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return undefined;
     const style = encodeURIComponent(this._config?.maptiler_style?.trim() || 'streets-v2');
     const point = `${longitude},${latitude},14`;
-    return `https://api.maptiler.com/maps/${style}/static/${point}/640x280.png?key=${encodeURIComponent(key)}`;
+    const marker = encodeURIComponent(`${longitude},${latitude},red`);
+    return `https://api.maptiler.com/maps/${style}/static/${point}/640x280.png?markers=${marker}&key=${encodeURIComponent(key)}`;
   }
 
   private _metric(label: string, entity?: EntityData) {
@@ -159,14 +174,72 @@ class BMWStatusCard extends LitElement {
     return value ? html`<div class="metric"><div class="metric-name">${label}</div><div class="metric-value">${value}</div></div>` : nothing;
   }
 
-  private _group(title: string, entries?: EntityData[]) {
+  private _label(entry: EntityData): string {
+    return entry.label || entry.name;
+  }
+
+  private _isOpen(entry: EntityData): boolean {
+    const state = entry.state.toLowerCase();
+    return ['on', 'open', 'open_tilt', 'tilt', 'unlocked'].includes(state) || state.includes('open');
+  }
+
+  private _summary(title: string, entries?: EntityData[], maxItems = 3) {
     const visible = (entries || []).filter((entry) => !this._isUnavailable(entry.state));
     if (!visible.length) return nothing;
     return html`
       <section class="panel">
         <div class="panel-heading"><span>${title}</span></div>
-        <div class="list">
-          ${visible.map((entry) => html`<div class="row"><span>${entry.name}</span><span>${this._value(entry)}</span></div>`)}
+        <div class="summary">
+          <div class="summary-status">${visible.length} Signale verfügbar</div>
+          <div class="summary-items">
+            ${visible.slice(0, maxItems).map((entry) => html`<span class="summary-item"><strong>${this._label(entry)}</strong> ${this._value(entry)}</span>`)}
+            ${visible.length > maxItems ? html`<span class="summary-item">+${visible.length - maxItems} weitere</span>` : nothing}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  private _openings(entries?: EntityData[]) {
+    const visible = (entries || []).filter((entry) => !this._isUnavailable(entry.state));
+    if (!visible.length) return nothing;
+    const open = visible.filter((entry) => this._isOpen(entry));
+    return html`
+      <section class="panel">
+        <div class="panel-heading"><span>Öffnungen</span></div>
+        <div class="summary">
+          <div class="summary-status">${open.length ? `${open.length} geöffnet` : 'Alles geschlossen'}</div>
+          ${open.length ? html`<div class="summary-items">${open.map((entry) => html`<span class="summary-item"><strong>${this._label(entry)}</strong></span>`)}</div>` : nothing}
+        </div>
+      </section>
+    `;
+  }
+
+  private _tirePosition(entry: EntityData): string {
+    if (entry.position) return entry.position;
+    const text = `${entry.name} ${entry.entity_id}`.toLowerCase();
+    const axle = text.includes('front') ? 'Vorne' : text.includes('rear') ? 'Hinten' : '';
+    const side = text.includes('left') ? 'links' : text.includes('right') ? 'rechts' : '';
+    return `${axle} ${side}`.trim() || 'Unbekannt';
+  }
+
+  private _tires(entries?: EntityData[]) {
+    const visible = (entries || []).filter((entry) => !this._isUnavailable(entry.state));
+    const actual = visible.filter((entry) => entry.role === 'actual' || (!entry.role && !/target|soll/i.test(`${entry.name} ${entry.entity_id}`)));
+    if (!actual.length) return nothing;
+    const target = visible.filter((entry) => entry.role === 'target' || (!entry.role && /target|soll/i.test(`${entry.name} ${entry.entity_id}`)));
+    const targetByPosition = new Map(target.map((entry) => [this._tirePosition(entry), entry]));
+    const classFor = (position: string) => position.toLowerCase().replace('vorne', 'front').replace('hinten', 'rear').replace(' ', '-');
+    return html`
+      <section class="panel">
+        <div class="panel-heading"><span>Reifendruck</span></div>
+        <div class="tire-board">
+          <div class="car-top"></div>
+          ${actual.map((entry) => {
+            const position = this._tirePosition(entry);
+            const desired = targetByPosition.get(position);
+            return html`<div class="wheel ${classFor(position)}"><span class="wheel-position">${position}</span><div class="wheel-value"><span>${this._value(entry)}</span><span>Soll ${this._value(desired) || '-'}</span></div></div>`;
+          })}
         </div>
       </section>
     `;
@@ -212,18 +285,18 @@ class BMWStatusCard extends LitElement {
           ${(presentation.badges || []).length
             ? html`<section class="panel"><div class="panel-heading"><span>Hinweise</span></div><div class="panel-body"><div class="badges">${presentation.badges?.map((badge) => html`<span class="badge ${badge.level}">${badge.label}</span>`)}</div></div></section>`
             : nothing}
-          <div class="group-grid">
-            ${this._group('Öffnungen', presentation.groups?.doors)}
-            ${this._group('Reifen', presentation.groups?.tires)}
-            ${this._group('Service', presentation.groups?.service)}
-            ${this._group('Klima', presentation.groups?.climate)}
-          </div>
           <section class="panel">
             <div class="panel-heading"><span>Fahrzeugposition</span></div>
             ${mapUrl
               ? html`<img class="map" src=${mapUrl} alt="Fahrzeugposition" />`
               : html`<div class="map-unavailable">Für die Positionskarte einen MapTiler API-Key in der Kartenkonfiguration hinterlegen.</div>`}
           </section>
+          <div class="group-grid">
+            ${this._openings(presentation.groups?.doors)}
+            ${this._tires(presentation.groups?.tires)}
+            ${this._summary('Service', presentation.groups?.service, 2)}
+            ${this._summary('Klima', presentation.groups?.climate, 2)}
+          </div>
         </div>
       </ha-card>
     `;

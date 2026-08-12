@@ -1,7 +1,7 @@
 {
   "name": "bmw-status-card",
-  "version": "0.1.92",
-  "description": "BMW Status Card for Home Assistant (auto-config using bmw_home + bmw-cardata-ha)",
+  "version": "0.2.1",
+  "description": "BMW Status Card for Home Assistant (bmw_status sensor reader)",
   "type": "module",
   "scripts": {
     "build": "rollup -c rollup.config.js",

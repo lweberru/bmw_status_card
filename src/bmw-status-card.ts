@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.4';
+const VERSION = '0.2.5';
 
 type HassState = {
   state: string;
@@ -26,6 +26,7 @@ type Badge = {
   key: string;
   label: string;
   level: 'warning' | 'alert' | string;
+  entity_id?: string;
 };
 
 type Presentation = {
@@ -38,6 +39,7 @@ type Presentation = {
   status?: {
     key?: string;
     label?: string | null;
+    entity_id?: string | null;
   };
   electrification?: string;
   entities?: Record<string, EntityData | null | undefined>;
@@ -82,24 +84,25 @@ class BMWStatusCard extends LitElement {
     .panel-heading span { flex: 1; }
     .panel-body { padding: 11px; }
     .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--divider-color); }
-    .metric { min-width: 0; padding: 11px; background: var(--card-background-color); }
+    .metric { min-width: 0; padding: 11px; border: 0; background: var(--card-background-color); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+    .metric:hover, .metric:focus-visible, .summary-item:hover, .summary-item:focus-visible, .wheel:hover, .wheel:focus-visible { outline: 2px solid var(--primary-color, #007a3d); outline-offset: -2px; }
     .metric-name { color: var(--secondary-text-color); font-size: 12px; }
     .metric-value { margin-top: 3px; color: var(--primary-text-color); font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
     .badges { display: flex; flex-wrap: wrap; gap: 7px; }
-    .badge { padding: 5px 8px; border: 1px solid #c88a21; border-radius: 3px; background: #fff7df; color: #604100; font-size: 12px; font-weight: 700; }
+    .badge { padding: 5px 8px; border: 1px solid #c88a21; border-radius: 3px; background: #fff7df; color: #604100; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
     .badge.alert { border-color: #bc3030; background: #fff0f0; color: #8a1f1f; }
     .summary { padding: 11px; display: grid; gap: 8px; }
-    .summary-status { color: var(--primary-text-color); font-size: 14px; font-weight: 700; }
+    .summary-status { border: 0; padding: 0; background: transparent; color: var(--primary-text-color); font: inherit; font-size: 14px; font-weight: 700; text-align: left; cursor: pointer; }
     .summary-detail { color: var(--secondary-text-color); font-size: 13px; line-height: 1.4; }
     .summary-items { display: flex; flex-wrap: wrap; gap: 6px; }
-    .summary-item { padding: 5px 7px; border: 1px solid var(--divider-color); color: var(--secondary-text-color); font-size: 12px; }
+    .summary-item { padding: 5px 7px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--secondary-text-color); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
     .summary-item strong { color: var(--primary-text-color); }
     .tire-board { position: relative; aspect-ratio: 1; margin: 12px; overflow: hidden; border: 1px solid var(--divider-color); background: #f6f6f4; }
     .car-top { position: absolute; top: 18px; bottom: 18px; left: 50%; width: 34%; min-width: 104px; transform: translateX(-50%); border: 2px solid var(--primary-text-color); border-radius: 44% 44% 30% 30%; background: var(--card-background-color); }
     .tire-vehicle-image { position: absolute; inset: 0; box-sizing: border-box; width: 100%; height: 100%; padding: 7px; object-fit: contain; object-position: center; }
     .car-top::before { content: ''; position: absolute; top: 20%; left: 13%; width: 74%; height: 38%; border: 1px solid var(--divider-color); border-radius: 40% 40% 14% 14%; background: var(--secondary-background-color); }
     .car-top::after { content: 'Vorne'; position: absolute; top: 7px; left: 50%; transform: translateX(-50%); color: var(--secondary-text-color); font-size: 11px; font-weight: 700; }
-    .wheel { position: absolute; width: 34%; max-width: 172px; padding: 5px 6px; border: 1px solid rgba(32, 42, 34, .24); border-left: 4px solid var(--primary-color, #007a3d); border-radius: 4px; background: rgba(255,255,255,.92); box-shadow: 0 1px 5px rgba(0,0,0,.18); color: #1d251f; font-size: 12px; box-sizing: border-box; }
+    .wheel { position: absolute; width: 34%; max-width: 172px; padding: 5px 6px; border: 1px solid rgba(32, 42, 34, .24); border-left: 4px solid var(--primary-color, #007a3d); border-radius: 4px; background: rgba(255,255,255,.92); box-shadow: 0 1px 5px rgba(0,0,0,.18); color: #1d251f; font: inherit; font-size: 12px; text-align: left; box-sizing: border-box; cursor: pointer; }
     .wheel.warning { border-left-color: #c88716; } .wheel.alert { border-left-color: #bb3030; }
     .wheel-position { display: block; color: #58625a; font-size: 10px; font-weight: 700; }
     .wheel-value { display: grid; gap: 2px; margin-top: 3px; }
@@ -108,7 +111,8 @@ class BMWStatusCard extends LitElement {
     .pressure-state { margin-top: 3px; font-size: 9px; font-weight: 700; color: #237047; }
     .wheel.warning .pressure-state { color: #8b5b00; } .wheel.alert .pressure-state { color: #a52323; }
     .front-left { top: 8px; left: 7px; } .front-right { top: 8px; right: 7px; } .rear-left { bottom: 8px; left: 7px; } .rear-right { bottom: 8px; right: 7px; }
-    .map-wrap { position: relative; background: var(--secondary-background-color); }
+    .map-wrap { position: relative; width: 100%; border: 0; padding: 0; background: var(--secondary-background-color); cursor: pointer; }
+    .map-wrap:focus-visible { outline: 2px solid var(--primary-color, #007a3d); outline-offset: -2px; }
     .map { width: 100%; aspect-ratio: 16 / 7; object-fit: cover; border: 0; display: block; }
     .map-marker { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; transform: translate(-50%, -50%); border: 3px solid #fff; border-radius: 50% 50% 50% 0; background: #c12828; box-shadow: 0 1px 5px rgba(0,0,0,.45); rotate: -45deg; }
     .map-unavailable { padding: 12px; color: var(--secondary-text-color); font-size: 13px; line-height: 1.4; }
@@ -166,7 +170,15 @@ class BMWStatusCard extends LitElement {
 
   private _metric(label: string, entity?: EntityData) {
     const value = this._value(entity);
-    return value ? html`<div class="metric"><div class="metric-name">${label}</div><div class="metric-value">${value}</div></div>` : nothing;
+    return value ? html`<button class="metric" @click=${() => this._openMoreInfo(entity)}><div class="metric-name">${label}</div><div class="metric-value">${value}</div></button>` : nothing;
+  }
+
+  private _openMoreInfo(entity?: EntityData): void {
+    if (entity?.entity_id) this._openEntityId(entity.entity_id);
+  }
+
+  private _openEntityId(entityId?: string | null): void {
+    if (entityId) this.dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId }, bubbles: true, composed: true }));
   }
 
   private _label(entry: EntityData): string {
@@ -185,9 +197,9 @@ class BMWStatusCard extends LitElement {
       <section class="panel">
         <div class="panel-heading"><span>${title}</span></div>
         <div class="summary">
-          <div class="summary-status">${title}</div>
+          <button class="summary-status" @click=${() => this._openMoreInfo(visible[0])}>${title}</button>
           <div class="summary-items">
-            ${visible.slice(0, maxItems).map((entry) => html`<span class="summary-item"><strong>${this._label(entry)}</strong> ${this._value(entry)}</span>`)}
+            ${visible.slice(0, maxItems).map((entry) => html`<button class="summary-item" @click=${() => this._openMoreInfo(entry)}><strong>${this._label(entry)}</strong> ${this._value(entry)}</button>`)}
             ${visible.length > maxItems ? html`<span class="summary-item">Weitere Werte sind in Home Assistant verfügbar</span>` : nothing}
           </div>
         </div>
@@ -217,7 +229,7 @@ class BMWStatusCard extends LitElement {
       <section class="panel">
         <div class="panel-heading"><span>Öffnungen</span></div>
         <div class="summary">
-          <div class="summary-status">${open.length ? 'Geöffnet' : 'Alles geschlossen'}</div>
+          <button class="summary-status" @click=${() => this._openMoreInfo(open[0] || visible[0])}>${open.length ? 'Geöffnet' : 'Alles geschlossen'}</button>
           <div class="summary-detail">${open.length ? open.map((entry) => this._label(entry)).join(', ') : 'Türen, Fenster, Motorhaube und Heckklappe sind geschlossen.'}</div>
         </div>
       </section>
@@ -231,7 +243,7 @@ class BMWStatusCard extends LitElement {
     const nextTimer = visible.find((entry) => /next.*state|timer.*next/i.test(`${entry.entity_id} ${entry.name}`));
     const status = active.length ? 'Klimatisierung aktiv' : 'Klimatisierung aus';
     const detail = active.length ? active.map((entry) => this._label(entry)).join(', ') : nextTimer ? `${this._label(nextTimer)}: ${this._value(nextTimer)}` : 'Keine Vorklimatisierung geplant.';
-    return html`<section class="panel"><div class="panel-heading"><span>Klima</span></div><div class="summary"><div class="summary-status">${status}</div><div class="summary-detail">${detail}</div></div></section>`;
+    return html`<section class="panel"><div class="panel-heading"><span>Klima</span></div><div class="summary"><button class="summary-status" @click=${() => this._openMoreInfo(active[0] || nextTimer || visible[0])}>${status}</button><div class="summary-detail">${detail}</div></div></section>`;
   }
 
   private _tirePosition(entry: EntityData): string {
@@ -274,14 +286,14 @@ class BMWStatusCard extends LitElement {
             const position = this._tirePosition(entry);
             const desired = targetByPosition.get(position);
             const pressure = this._pressureState(entry, desired);
-            return html`<div class="wheel ${this._tireClass(position)} ${pressure.level}">
+            return html`<button class="wheel ${this._tireClass(position)} ${pressure.level}" @click=${() => this._openMoreInfo(entry)}>
               <span class="wheel-position">${position}</span>
               <div class="wheel-value">
                 <span>Ist<strong>${this._value(entry) || '-'}</strong></span>
                 <span>Soll<strong>${this._value(desired) || '-'}</strong></span>
               </div>
               <div class="pressure-state">${pressure.label}</div>
-            </div>`;
+            </button>`;
           })}
         </div>
       </section>
@@ -302,6 +314,7 @@ class BMWStatusCard extends LitElement {
     const subtitle = [vehicle.model, vehicle.license_plate].filter(Boolean).join(' · ');
     const mapUrl = presentation.location_image;
     const statusKey = status.key || 'unknown';
+    const motionEntityId = typeof status.entity_id === 'string' ? status.entity_id : undefined;
 
     return html`
       <ha-card>
@@ -309,7 +322,7 @@ class BMWStatusCard extends LitElement {
           ${image ? html`<img src=${image} alt=${title} />` : nothing}
           <div class="hero-copy">
             <div><div class="eyebrow">${presentation.electrification?.toUpperCase() || 'BMW'}</div><h2>${title}</h2>${subtitle ? html`<p class="subtitle">${subtitle}</p>` : nothing}</div>
-            <div class="status"><span class="status-dot ${statusKey}"></span>${status.label || 'Unbekannt'}</div>
+            <button class="status" @click=${() => this._openEntityId(motionEntityId)}><span class="status-dot ${statusKey}"></span>${status.label || 'Unbekannt'}</button>
           </div>
         </div>
         <div class="content">
@@ -317,21 +330,23 @@ class BMWStatusCard extends LitElement {
             <div class="panel-heading"><span>Energie & Fahrzeug</span></div>
             <div class="metrics">
               ${this._metric('Ladezustand', this._entity('battery_charge'))}
+              ${presentation.electrification === 'mhev' ? this._metric('Mildhybrid-Batterie', this._entity('mild_hybrid_battery_charge')) : nothing}
               ${this._metric('Tank', this._entity('fuel'))}
               ${this._metric('Elektrische Reichweite', this._entity('electric_range'))}
               ${this._metric('Reichweite', this._entity('total_range'))}
               ${this._metric('Kilometerstand', this._entity('odometer'))}
               ${this._metric('Laden', this._entity('charging'))}
               ${this._metric('Verriegelung', this._entity('lock'))}
+              ${this._metric('Höhe über NN', this._entity('altitude'))}
             </div>
           </section>
           ${(presentation.badges || []).length
-            ? html`<section class="panel"><div class="panel-heading"><span>Hinweise</span></div><div class="panel-body"><div class="badges">${presentation.badges?.map((badge) => html`<span class="badge ${badge.level}">${badge.label}</span>`)}</div></div></section>`
+            ? html`<section class="panel"><div class="panel-heading"><span>Hinweise</span></div><div class="panel-body"><div class="badges">${presentation.badges?.map((badge) => html`<button class="badge ${badge.level}" @click=${() => this._openEntityId(badge.entity_id)}>${badge.label}</button>`)}</div></div></section>`
             : nothing}
           <section class="panel">
             <div class="panel-heading"><span>Fahrzeugposition</span></div>
             ${mapUrl
-              ? html`<div class="map-wrap"><img class="map" src=${mapUrl} alt="Fahrzeugposition" /><span class="map-marker" aria-label="Fahrzeugposition"></span></div>`
+              ? html`<button class="map-wrap" @click=${() => this._openMoreInfo(this._entity('device_tracker'))}><img class="map" src=${mapUrl} alt="Fahrzeugposition" /><span class="map-marker" aria-label="Fahrzeugposition"></span></button>`
               : html`<div class="map-unavailable">Die Positionskarte wird vorbereitet.</div>`}
           </section>
           ${this._tires(presentation.groups?.tires, presentation.tire_image)}

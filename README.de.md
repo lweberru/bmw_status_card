@@ -9,7 +9,7 @@ Fahrzeug-Erkennung, Provider-Zugriffe, semantische Klassifizierung, Karten und
 Asset-Caching; diese Karte rendert ausschliesslich die versionierte Praesentation
 des Backends.
 
-Version: 0.2.6
+Version: 0.2.7
 
 ![Screenshot der BMW Status Card](bmw_status_card.png)
 

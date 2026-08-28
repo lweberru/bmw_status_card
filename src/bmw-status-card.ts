@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.6';
+const VERSION = '0.2.7';
 
 type HassState = {
   state: string;
@@ -74,7 +74,7 @@ class BMWStatusCard extends LitElement {
     .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; opacity: .8; }
     h2 { margin: 4px 0 0; font-size: 24px; line-height: 1.1; letter-spacing: 0; }
     .subtitle { margin: 4px 0 0; font-size: 14px; opacity: .9; }
-    .status { display: inline-flex; align-items: center; gap: 7px; width: fit-content; padding: 7px 10px; border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.38); font-size: 13px; font-weight: 700; }
+    .status { display: inline-flex; align-items: center; gap: 7px; width: fit-content; padding: 8px 12px; border: 1px solid rgba(255,255,255,.72); border-radius: 4px; background: rgba(8,18,12,.9); box-shadow: 0 2px 8px rgba(0,0,0,.42); color: #fff; font-size: 13px; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,.65); }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #d8b25b; }
     .status-dot.driving { background: #59c887; }
     .content { padding: 14px; display: grid; gap: 12px; }

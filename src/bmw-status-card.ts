@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.5';
+const VERSION = '0.2.6';
 
 type HassState = {
   state: string;
@@ -67,8 +67,8 @@ class BMWStatusCard extends LitElement {
   static styles = css`
     :host { display: block; }
     ha-card { overflow: hidden; }
-    .hero { position: relative; min-height: 218px; background: #18211b; color: #fff; }
-    .hero img { width: 100%; height: 206px; object-fit: cover; display: block; }
+    .hero { position: relative; aspect-ratio: 1; background: #18211b; color: #fff; }
+    .hero img { width: 100%; height: 100%; object-fit: contain; display: block; }
     .hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(7, 16, 10, .82), rgba(7, 16, 10, .1) 72%); }
     .hero-copy { position: absolute; inset: 0; z-index: 1; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; }
     .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; opacity: .8; }

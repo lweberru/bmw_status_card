@@ -22,8 +22,8 @@ const x=globalThis,w=t=>t,A=x.trustedTypes,E=A?A.createPolicy("lit-html",{create
  */class ot extends y{constructor(){super(...arguments),this.renderOptions={host:this},this._$Do=void 0}createRenderRoot(){const t=super.createRenderRoot();return this.renderOptions.renderBefore??=t.firstChild,t}update(t){const e=this.render();this.hasUpdated||(this.renderOptions.isConnected=this.isConnected),super.update(t),this._$Do=((t,e,i)=>{const s=i?.renderBefore??e;let r=s._$litPart$;if(void 0===r){const t=i?.renderBefore??null;s._$litPart$=r=new Q(e.insertBefore(U(),t),t,void 0,i??{})}return r._$AI(t),r})(e,this.renderRoot,this.renderOptions)}connectedCallback(){super.connectedCallback(),this._$Do?.setConnected(!0)}disconnectedCallback(){super.disconnectedCallback(),this._$Do?.setConnected(!1)}render(){return W}}ot._$litElement$=!0,ot.finalized=!0,nt.litElementHydrateSupport?.({LitElement:ot});const at=nt.litElementPolyfillSupport;at?.({LitElement:ot}),(nt.litElementVersions??=[]).push("4.2.2");const lt="bmw-status-card";class ct extends ot{static{this.properties={hass:{attribute:!1},_config:{state:!0}}}static{this.styles=n`
     :host { display: block; }
     ha-card { overflow: hidden; }
-    .hero { position: relative; min-height: 218px; background: #18211b; color: #fff; }
-    .hero img { width: 100%; height: 206px; object-fit: cover; display: block; }
+    .hero { position: relative; aspect-ratio: 1; background: #18211b; color: #fff; }
+    .hero img { width: 100%; height: 100%; object-fit: contain; display: block; }
     .hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(7, 16, 10, .82), rgba(7, 16, 10, .1) 72%); }
     .hero-copy { position: absolute; inset: 0; z-index: 1; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; }
     .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; opacity: .8; }
@@ -154,5 +154,5 @@ const x=globalThis,w=t=>t,A=x.trustedTypes,E=A?A.createPolicy("lit-html",{create
       <div class="fields">
         <label>BMW-Status-Sensor<input data-key="entity" .value=${t.entity||""} @input=${this._onInput} placeholder="sensor.status" /></label>
       </div>
-    `}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",dt),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Rendert die versionierte Präsentation von bmw_status.",version:"0.2.5"});
+    `}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",dt),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Rendert die versionierte Präsentation von bmw_status.",version:"0.2.6"});
 //# sourceMappingURL=bmw-status-card.js.map

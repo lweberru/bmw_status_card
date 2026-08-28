@@ -8,7 +8,7 @@ The two repositories form one solution: the backend owns vehicle discovery,
 provider access, semantic classification, maps and visual-asset caching; this
 card renders only the backend's versioned presentation.
 
-Version: 0.2.5
+Version: 0.2.6
 
 ![BMW Status Card screenshot](bmw_status_card.png)
 

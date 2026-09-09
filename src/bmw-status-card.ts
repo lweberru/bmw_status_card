@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.9';
+const VERSION = '0.2.10';
 
 type HassState = {
   state: string;
@@ -15,6 +15,14 @@ type HomeAssistant = {
 type HomeAssistantCard = HTMLElement & {
   hass: HomeAssistant;
   setConfig(config: { type: string; entities: { entity: string }[]; theme_mode: string }): void;
+};
+
+type CardHelpers = {
+  createCardElement(config: { type: string; entities: { entity: string }[]; theme_mode: string }): Promise<HomeAssistantCard>;
+};
+
+type HomeAssistantWindow = Window & {
+  loadCardHelpers?: () => Promise<CardHelpers>;
 };
 
 type EntityData = {
@@ -379,8 +387,13 @@ class BMWStatusLocationMap extends LitElement {
   protected async updated(): Promise<void> {
     if (!this.entityId || !this.hass) return;
     if (!this._mapCard) {
-      await customElements.whenDefined('hui-map-card');
-      this._mapCard = document.createElement('hui-map-card') as HomeAssistantCard;
+      const loadCardHelpers = (window as HomeAssistantWindow).loadCardHelpers;
+      if (!loadCardHelpers) return;
+      const entityId = this.entityId;
+      const helpers = await loadCardHelpers();
+      if (this._mapCard || this.entityId !== entityId) return;
+      this._mapCard = await helpers.createCardElement({ type: 'map', entities: [{ entity: entityId }], theme_mode: 'auto' });
+      this._configuredEntityId = entityId;
       this.renderRoot.append(this._mapCard);
     }
     if (this._configuredEntityId !== this.entityId) {

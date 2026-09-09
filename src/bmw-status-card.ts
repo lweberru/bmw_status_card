@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.7';
+const VERSION = '0.2.8';
 
 type HassState = {
   state: string;
@@ -10,6 +10,11 @@ type HassState = {
 
 type HomeAssistant = {
   states: Record<string, HassState>;
+};
+
+type HomeAssistantCard = HTMLElement & {
+  hass: HomeAssistant;
+  setConfig(config: { type: string; entities: { entity: string }[]; theme_mode: string }): void;
 };
 
 type EntityData = {
@@ -47,7 +52,6 @@ type Presentation = {
   badges?: Badge[];
   images?: string[];
   tire_image?: string;
-  location_image?: string;
 };
 
 type BMWStatusCardConfig = {
@@ -111,10 +115,6 @@ class BMWStatusCard extends LitElement {
     .pressure-state { margin-top: 3px; font-size: 9px; font-weight: 700; color: #237047; }
     .wheel.warning .pressure-state { color: #8b5b00; } .wheel.alert .pressure-state { color: #a52323; }
     .front-left { top: 8px; left: 7px; } .front-right { top: 8px; right: 7px; } .rear-left { bottom: 8px; left: 7px; } .rear-right { bottom: 8px; right: 7px; }
-    .map-wrap { position: relative; width: 100%; border: 0; padding: 0; background: var(--secondary-background-color); cursor: pointer; }
-    .map-wrap:focus-visible { outline: 2px solid var(--primary-color, #007a3d); outline-offset: -2px; }
-    .map { width: 100%; aspect-ratio: 16 / 7; object-fit: cover; border: 0; display: block; }
-    .map-marker { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; transform: translate(-50%, -50%); border: 3px solid #fff; border-radius: 50% 50% 50% 0; background: #c12828; box-shadow: 0 1px 5px rgba(0,0,0,.45); rotate: -45deg; }
     .map-unavailable { padding: 12px; color: var(--secondary-text-color); font-size: 13px; line-height: 1.4; }
     .message { padding: 16px; color: var(--secondary-text-color); }
     .error { color: var(--error-color, #b3261e); }
@@ -312,7 +312,7 @@ class BMWStatusCard extends LitElement {
     const image = presentation.images?.[0];
     const title = vehicle.name || [vehicle.manufacturer, vehicle.model].filter(Boolean).join(' ') || 'BMW';
     const subtitle = [vehicle.model, vehicle.license_plate].filter(Boolean).join(' · ');
-    const mapUrl = presentation.location_image;
+    const trackerEntityId = this._entity('device_tracker')?.entity_id;
     const statusKey = status.key || 'unknown';
     const motionEntityId = typeof status.entity_id === 'string' ? status.entity_id : undefined;
 
@@ -345,9 +345,9 @@ class BMWStatusCard extends LitElement {
             : nothing}
           <section class="panel">
             <div class="panel-heading"><span>Fahrzeugposition</span></div>
-            ${mapUrl
-              ? html`<button class="map-wrap" @click=${() => this._openMoreInfo(this._entity('device_tracker'))}><img class="map" src=${mapUrl} alt="Fahrzeugposition" /><span class="map-marker" aria-label="Fahrzeugposition"></span></button>`
-              : html`<div class="map-unavailable">Die Positionskarte wird vorbereitet.</div>`}
+            ${trackerEntityId
+              ? html`<bmw-status-location-map .hass=${this.hass} .entityId=${trackerEntityId}></bmw-status-location-map>`
+              : html`<div class="map-unavailable">Die Fahrzeugposition ist nicht verfügbar.</div>`}
           </section>
           ${this._tires(presentation.groups?.tires, presentation.tire_image)}
           <div class="group-grid">
@@ -358,6 +358,35 @@ class BMWStatusCard extends LitElement {
         </div>
       </ha-card>
     `;
+  }
+}
+
+class BMWStatusLocationMap extends LitElement {
+  static properties = {
+    hass: { attribute: false },
+    entityId: { attribute: false },
+  };
+
+  private _mapCard?: HomeAssistantCard;
+  private _configuredEntityId?: string;
+  declare hass?: HomeAssistant;
+  declare entityId?: string;
+
+  static styles = css`
+    :host { display: block; }
+  `;
+
+  protected updated(): void {
+    if (!this.entityId || !this.hass) return;
+    if (!this._mapCard) {
+      this._mapCard = document.createElement('hui-map-card') as HomeAssistantCard;
+      this.renderRoot.append(this._mapCard);
+    }
+    if (this._configuredEntityId !== this.entityId) {
+      this._mapCard.setConfig({ type: 'map', entities: [{ entity: this.entityId }], theme_mode: 'auto' });
+      this._configuredEntityId = this.entityId;
+    }
+    this._mapCard.hass = this.hass;
   }
 }
 
@@ -402,6 +431,7 @@ class BMWStatusCardEditor extends LitElement {
 
 customElements.define(CARD_NAME, BMWStatusCard);
 customElements.define('bmw-status-card-editor', BMWStatusCardEditor);
+customElements.define('bmw-status-location-map', BMWStatusLocationMap);
 
 (window as unknown as { customCards?: unknown[] }).customCards = (window as unknown as { customCards?: unknown[] }).customCards || [];
 (window as unknown as { customCards: unknown[] }).customCards.push({

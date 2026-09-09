@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.8';
+const VERSION = '0.2.9';
 
 type HassState = {
   state: string;
@@ -376,9 +376,10 @@ class BMWStatusLocationMap extends LitElement {
     :host { display: block; }
   `;
 
-  protected updated(): void {
+  protected async updated(): Promise<void> {
     if (!this.entityId || !this.hass) return;
     if (!this._mapCard) {
+      await customElements.whenDefined('hui-map-card');
       this._mapCard = document.createElement('hui-map-card') as HomeAssistantCard;
       this.renderRoot.append(this._mapCard);
     }

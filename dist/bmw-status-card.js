@@ -143,7 +143,7 @@ const x=globalThis,w=t=>t,A=x.trustedTypes,E=A?A.createPolicy("lit-html",{create
       </ha-card>
     `}}class dt extends ot{static{this.properties={hass:{attribute:!1},entityId:{attribute:!1}}}static{this.styles=n`
     :host { display: block; }
-  `}updated(){this.entityId&&this.hass&&(this._mapCard||(this._mapCard=document.createElement("hui-map-card"),this.renderRoot.append(this._mapCard)),this._configuredEntityId!==this.entityId&&(this._mapCard.setConfig({type:"map",entities:[{entity:this.entityId}],theme_mode:"auto"}),this._configuredEntityId=this.entityId),this._mapCard.hass=this.hass)}}class ht extends ot{static{this.properties={hass:{attribute:!1},_config:{state:!0}}}static{this.styles=n`
+  `}async updated(){this.entityId&&this.hass&&(this._mapCard||(await customElements.whenDefined("hui-map-card"),this._mapCard=document.createElement("hui-map-card"),this.renderRoot.append(this._mapCard)),this._configuredEntityId!==this.entityId&&(this._mapCard.setConfig({type:"map",entities:[{entity:this.entityId}],theme_mode:"auto"}),this._configuredEntityId=this.entityId),this._mapCard.hass=this.hass)}}class ht extends ot{static{this.properties={hass:{attribute:!1},_config:{state:!0}}}static{this.styles=n`
     :host { display: block; padding: 12px; }
     .fields { display: grid; gap: 14px; }
     label { display: grid; gap: 6px; color: var(--primary-text-color); font-size: 14px; }
@@ -152,5 +152,5 @@ const x=globalThis,w=t=>t,A=x.trustedTypes,E=A?A.createPolicy("lit-html",{create
       <div class="fields">
         <label>BMW-Status-Sensor<input data-key="entity" .value=${t.entity||""} @input=${this._onInput} placeholder="sensor.status" /></label>
       </div>
-    `}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",ht),customElements.define("bmw-status-location-map",dt),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Rendert die versionierte Präsentation von bmw_status.",version:"0.2.8"});
+    `}}customElements.define(lt,ct),customElements.define("bmw-status-card-editor",ht),customElements.define("bmw-status-location-map",dt),window.customCards=window.customCards||[],window.customCards.push({type:lt,name:"BMW Status Card",description:"Rendert die versionierte Präsentation von bmw_status.",version:"0.2.9"});
 //# sourceMappingURL=bmw-status-card.js.map

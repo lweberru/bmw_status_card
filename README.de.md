@@ -9,7 +9,7 @@ Fahrzeug-Erkennung, Provider-Zugriffe, semantische Klassifizierung, Karten und
 Asset-Caching; diese Karte rendert ausschliesslich die versionierte Praesentation
 des Backends.
 
-Version: 0.2.10
+Version: 0.3.0
 
 ![Screenshot der BMW Status Card](bmw_status_card.png)
 
@@ -20,6 +20,9 @@ Version: 0.2.10
 - Semantische Warnhinweise fuer relevante Fahrzeugzustaende.
 - Vollbreite Reifendruckansicht mit Ist- und Sollwerten pro Reifen.
 - Zusammenfassungen fuer Oeffnungen, Service und Klima.
+- Spritverbrauch fuer die gesamte Fahrzeuglebensdauer, seit dem letzten Tanken
+  und fuer den aktuellen Tag: Liter, Strecke und Durchschnitt in l/100 km.
+  Tankstand-Schaetzungen, Datenluecken und fehlende Anfangswerte sind sichtbar.
 
 ## Voraussetzungen
 
@@ -57,8 +60,19 @@ semantischen Werte:
 - `vehicle`, `status` und `electrification`
 - `entities` fuer Energie, Tank, Reichweite, Kilometerstand und Verriegelung
 - `groups` fuer Oeffnungen, Reifen, Service und Klima
+- `fuel_consumption` fuer die drei Verbrauchszeitraeume, Tankereignisse und
+  Konfigurationshinweise. Die Einstellungen (Tankinhalt, Sensoren, Anfangswerte,
+  Tankerkennungsschwelle) erfolgen im Configflow bzw. den Optionen des Backends,
+  nicht in der Karte. Ohne das optionale Attribut bleibt die Anzeige unveraendert.
 - `badges` fuer semantische Warnungen
 - `images` und `location_image` fuer backend-generierte, lokal gecachte Assets
 
 Aktualisiere Backend und Frontend gemeinsam, wenn ein Release diesen Vertrag
 aendert.
+
+## Lokale Pruefung
+
+`npm ci`, `npx tsc --noEmit` und `npm run build` pruefen und bauen die Karte.
+Mit `python3 -m http.server 8765 --bind 127.0.0.1` im Repository kann
+`http://127.0.0.1:8765/tests/fuel.html` geoeffnet werden. Der Browser-Smoke-Test
+prueft alle Zeitraeume, unbekannte Werte und Nullwerte, Hinweise und Live-Aktualisierung.

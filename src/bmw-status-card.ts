@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 
 const CARD_NAME = 'bmw-status-card';
-const VERSION = '0.2.10';
+const VERSION = '0.3.0';
 
 type HassState = {
   state: string;
@@ -42,7 +42,29 @@ type Badge = {
   entity_id?: string;
 };
 
+type FuelPeriod = {
+  liters: number | null;
+  distance_km: number | null;
+  average_l_per_100km: number | null;
+  incomplete: boolean;
+};
+
+type FuelConsumption = {
+  method: 'tank_level_estimate';
+  issues: string[];
+  started_at: string | null;
+  day: string;
+  remaining_liters: number | null;
+  last_refuel_at: string | null;
+  last_refuel_liters: number | null;
+  refuel_count: number;
+  total: FuelPeriod;
+  since_refuel: FuelPeriod;
+  today: FuelPeriod;
+};
+
 type Presentation = {
+  fuel_consumption?: FuelConsumption;
   vehicle?: {
     name?: string | null;
     manufacturer?: string | null;
@@ -106,6 +128,12 @@ class BMWStatusCard extends LitElement {
     .summary { padding: 11px; display: grid; gap: 8px; }
     .summary-status { border: 0; padding: 0; background: transparent; color: var(--primary-text-color); font: inherit; font-size: 14px; font-weight: 700; text-align: left; cursor: pointer; }
     .summary-detail { color: var(--secondary-text-color); font-size: 13px; line-height: 1.4; }
+    .fuel-periods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .fuel-period { min-width: 0; }
+    .fuel-period h3 { margin: 0 0 6px; font-size: 13px; color: var(--primary-text-color); }
+    .fuel-value { color: var(--primary-text-color); font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
+    .fuel-note { margin: 10px 0 0; }
+    @media (max-width: 360px) { .fuel-periods { grid-template-columns: 1fr; } }
     .summary-items { display: flex; flex-wrap: wrap; gap: 6px; }
     .summary-item { padding: 5px 7px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--secondary-text-color); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
     .summary-item strong { color: var(--primary-text-color); }
@@ -183,6 +211,54 @@ class BMWStatusCard extends LitElement {
 
   private _openMoreInfo(entity?: EntityData): void {
     if (entity?.entity_id) this._openEntityId(entity.entity_id);
+  }
+
+  private _fuelValue(value: number | null, unit: string): string {
+    return value !== null && Number.isFinite(value)
+      ? `${value.toLocaleString('de-DE', { maximumFractionDigits: 2 })} ${unit}`
+      : 'Unbekannt';
+  }
+
+  private _fuelConsumption(fuel?: FuelConsumption) {
+    if (!fuel) return nothing;
+    const issueLabels: Record<string, string> = {
+      missing_tank_capacity: 'Tankinhalt in den Integrationsoptionen ergänzen.',
+      missing_initial_total: 'Anfangsverbrauch für den Lebenszeit-Gesamtwert in den Integrationsoptionen ergänzen.',
+      fuel_unavailable: 'Tankstand ist nicht verfügbar oder ungültig.',
+      odometer_unavailable: 'Kilometerstand ist nicht verfügbar oder ungültig.',
+      unsupported_fuel_unit: 'Der Tankstand-Sensor muss L oder % liefern.',
+      unsupported_distance_unit: 'Der Kilometerstand-Sensor muss km oder mi liefern.',
+      odometer_decreased: 'Rückläufiger Kilometerstand: Distanzwert wurde nicht übernommen.',
+      source_changed: 'Messquelle oder Tankinhalt geändert; Messreferenz wurde neu gesetzt.',
+    };
+    const periods: [string, FuelPeriod][] = [
+      ['Gesamt (Lebenszeit)', fuel.total],
+      ['Seit letztem Tanken', fuel.since_refuel],
+      ['Heute', fuel.today],
+    ];
+    return html`
+      <section class="panel">
+        <div class="panel-heading"><span>Spritverbrauch · geschätzt</span></div>
+        <div class="panel-body">
+          <div class="fuel-periods">
+            ${periods.map(([label, period]) => html`
+              <div class="fuel-period">
+                <h3>${label}</h3>
+                <div class="fuel-value">${this._fuelValue(period.liters, 'L')}</div>
+                <div class="summary-detail">${this._fuelValue(period.distance_km, 'km')}</div>
+                <div class="summary-detail">${this._fuelValue(period.average_l_per_100km, 'l/100 km')}</div>
+                ${period.incomplete ? html`<div class="summary-detail">Zeitraum unvollständig</div>` : nothing}
+              </div>
+            `)}
+          </div>
+          ${fuel.started_at ? html`<p class="summary-detail fuel-note">Erfassung seit ${new Date(fuel.started_at).toLocaleString('de-DE')}</p>` : nothing}
+          ${fuel.last_refuel_at
+            ? html`<p class="summary-detail fuel-note">Letztes Tanken erkannt: ${new Date(fuel.last_refuel_at).toLocaleString('de-DE')} · ca. ${this._fuelValue(fuel.last_refuel_liters, 'L')} nachgefüllt</p>`
+            : html`<p class="summary-detail fuel-note">Noch kein Tanken erkannt. Das Tankintervall beginnt mit den konfigurierten Anfangswerten oder dem Erfassungsbeginn.</p>`}
+          ${fuel.issues.map((issue) => html`<p class="summary-detail fuel-note" role="status">${issueLabels[issue] || issue}</p>`)}
+        </div>
+      </section>
+    `;
   }
 
   private _openEntityId(entityId?: string | null): void {
@@ -348,6 +424,7 @@ class BMWStatusCard extends LitElement {
               ${this._metric('Höhe über NN', this._entity('altitude'))}
             </div>
           </section>
+          ${this._fuelConsumption(presentation.fuel_consumption)}
           ${(presentation.badges || []).length
             ? html`<section class="panel"><div class="panel-heading"><span>Hinweise</span></div><div class="panel-body"><div class="badges">${presentation.badges?.map((badge) => html`<button class="badge ${badge.level}" @click=${() => this._openEntityId(badge.entity_id)}>${badge.label}</button>`)}</div></div></section>`
             : nothing}

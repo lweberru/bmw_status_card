@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BMW Status Card fuel tests</title>
+  <style>
+    body { margin: 16px; font-family: sans-serif; background: #fafafa; }
+    bmw-status-card { max-width: 520px; --primary-text-color: #222; --secondary-text-color: #555; --divider-color: #ccc; --card-background-color: white; --secondary-background-color: #f5f5f5; }
+  </style>
+  <bmw-status-card></bmw-status-card>
+  <pre id="result">Running...</pre>
+  <script type="module">
+    import '../dist/bmw-status-card.js';
+
+    const card = document.querySelector('bmw-status-card');
+    card.setConfig({ type: 'custom:bmw-status-card', entity: 'sensor.status' });
+    const period = { liters: 2, distance_km: 25, average_l_per_100km: 8, incomplete: false };
+    const fuel = {
+      method: 'tank_level_estimate', issues: [], started_at: '2026-11-15T12:00:00+01:00',
+      day: '2026-11-15', remaining_liters: 38, last_refuel_at: null, last_refuel_liters: null, refuel_count: 0,
+      total: { ...period, liters: 8002, distance_km: 100025 }, since_refuel: { ...period }, today: { ...period },
+    };
+    const presentation = { vehicle: { name: 'BMW Test' }, status: { key: 'parked' }, entities: {}, groups: {} };
+    async function render(value) {
+      card.hass = { states: { 'sensor.status': { state: 'parked', attributes: { presentation: value } } } };
+      await card.updateComplete;
+      return card.shadowRoot;
+    }
+    let assertions = 0;
+    function check(condition, message) {
+      if (!condition) throw new Error(message);
+      assertions++;
+    }
+    try {
+      let root = await render(presentation);
+      check(!root.querySelector('.fuel-periods'), 'Older backends must not show a fuel panel');
+      root = await render({ ...presentation, fuel_consumption: fuel });
+      check(root.querySelectorAll('.fuel-period').length === 3, 'All three periods must render');
+      check(root.textContent.includes('8.002 L'), 'Lifetime total must use German number formatting');
+      check(root.textContent.includes('8 l/100 km'), 'Average consumption must render');
+      check(root.textContent.includes('Noch kein Tanken erkannt'), 'Missing refuel must be explicit');
+      root = await render({ ...presentation, fuel_consumption: {
+        ...fuel, issues: ['missing_initial_total'], total: { ...period, liters: null, average_l_per_100km: null, incomplete: true },
+        today: { ...period, liters: 0, distance_km: 0, average_l_per_100km: null },
+      } });
+      check(root.querySelector('.fuel-period').textContent.includes('Unbekannt'), 'Unknown values must not become zero');
+      check(root.textContent.includes('Zeitraum unvollständig'), 'Partial coverage must be visible');
+      check(root.textContent.includes('Anfangsverbrauch'), 'Configuration guidance must be visible');
+      check(root.querySelectorAll('.fuel-value')[2].textContent === '0 L', 'Zero consumption must remain visible');
+      root = await render({ ...presentation, fuel_consumption: {
+        ...fuel, last_refuel_at: '2026-11-15T13:00:00+01:00', last_refuel_liters: 12, refuel_count: 1,
+      } });
+      check(root.textContent.includes('12 L nachgefüllt'), 'Refueling amount must render');
+      check(!root.textContent.includes('Noch kein Tanken erkannt'), 'Refueling must update when hass changes');
+      check(root.textContent.includes('geschätzt'), 'Estimation must be explicit');
+      check(!root.textContent.includes('Änderungen zwischen Meldungen'), 'Technical limitations belong in documentation');
+      document.querySelector('#result').textContent = `PASS: ${assertions} assertions`;
+      document.documentElement.dataset.result = 'passed';
+    } catch (error) {
+      document.querySelector('#result').textContent = `FAIL: ${error.message}`;
+      document.documentElement.dataset.result = 'failed';
+      throw error;
+    }
+  </script>
+</html>
